@@ -146,7 +146,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             var keptFs = new List<CatalogItem>();
             if (fsFound is not null)
             {
-                foreach (var old in previous.Items.Where(i => i.Source == Sources.FileSystem && !fsFound.Contains(i.Id) && i.Path is not null))
+                foreach (var old in previous.Items.Where(i => i.Source == Sources.FileSystem && !fsFound.Contains(i.Id) && i.Path is not null && !FileSystemProvider.IsUnderToolCache(i.Path)))
                 {
                     var again = await _inspector.InspectAsync(old.Path!, fetchGit: false, force: true, computeSize: false, ct, skipCloudGit: true).ConfigureAwait(false);
                     if (again is not null)

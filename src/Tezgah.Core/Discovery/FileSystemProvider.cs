@@ -13,9 +13,11 @@ namespace Tezgah.Core.Discovery;
 /// <list type="bullet">
 /// <item>Never follows reparse points (junctions, symlinks, mount points) and skips hidden/system and excluded directories.</item>
 /// <item>A folder containing <c>.git</c> (directory, or file for worktrees/submodules) is a repository; the walk does not descend into it.</item>
-/// <item>A folder with a "strong" project marker (package.json, pyproject.toml, *.csproj, Cargo.toml...) is a project and is not descended into.
-/// "Weak" markers (index.html, main.py, run.bat...) make the folder a candidate but the walk continues below it, so a stray
-/// file in e.g. Documents can never hide everything underneath.</item>
+/// <item>A folder with a "strong" project marker (package.json, pyproject.toml, *.csproj, Cargo.toml...) is a project. Below it
+/// the walk continues for a couple of levels looking only for git repositories (a workspace folder with a docker-compose.yml
+/// or .sln next to its sibling repos must not hide them). Below a repository only direct child repositories are looked for.
+/// "Weak" markers (index.html, main.py, run.bat...) make the folder a candidate but the walk continues normally below it.</item>
+/// <item>Tool-owned trees under the profile (Go module cache, scoop apps/buckets, conda, pipx) are skipped by path.</item>
 /// <item>Each directory is listed exactly once; nothing is read except at candidate folders.</item>
 /// </list>
 /// </remarks>
@@ -172,10 +174,83 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
 
     private readonly record struct Entry(string Name, bool IsDirectory, FileAttributes Attributes);
 
+    private static readonly Lazy<IReadOnlySet<string>> ToolCachePaths = new(() => BuildToolCachePaths(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Environment.GetEnvironmentVariable));
+
+    /// <summary>True when <paramref name="path"/> is inside a tool-owned tree (never a user project).</summary>
+    internal static bool IsUnderToolCache(string path)
+    {
+        try
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            return ToolCachePaths.Value.Any(p => full.Equals(p, StringComparison.OrdinalIgnoreCase) || full.StartsWith(p + "\\", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Folders owned by developer tools that look like projects but are caches: Go's module cache (GOPATH\pkg,
+    /// GOMODCACHE), scoop apps/buckets/cache, conda installations, pipx venvs, pyenv. Matched by full path, not by
+    /// name, because "go", "pkg" or "buckets" are also common names for real projects.
+    /// </summary>
+    internal static IReadOnlySet<string> BuildToolCachePaths(string home, Func<string, string?> env)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(params string?[] parts)
+        {
+            if (parts.Any(string.IsNullOrWhiteSpace))
+            {
+                return;
+            }
+
+            try
+            {
+                var p = Path.Combine(parts!);
+                if (Path.IsPathFullyQualified(p))
+                {
+                    set.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)));
+                }
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+
+        var gopath = env("GOPATH");
+        string[] goRoots = string.IsNullOrWhiteSpace(gopath) ? [Path.Combine(home, "go")] : gopath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var g in goRoots)
+        {
+            Add(g, "pkg");
+        }
+
+        Add(env("GOMODCACHE"));
+        foreach (var scoop in new[] { env("SCOOP") ?? Path.Combine(home, "scoop"), env("SCOOP_GLOBAL") })
+        {
+            foreach (var sub in new[] { "apps", "buckets", "cache", "persist", "shims" })
+            {
+                Add(scoop, sub);
+            }
+        }
+
+        foreach (var conda in new[] { "miniconda3", "anaconda3", "Miniconda3", "Anaconda3", "miniforge3", "mambaforge" })
+        {
+            Add(home, conda);
+        }
+
+        Add(env("CONDA_PREFIX"));
+        Add(env("PIPX_HOME") ?? Path.Combine(home, "pipx"));
+        Add(home, ".pyenv");
+        return set;
+    }
+
     /// <summary>Walks all roots (in parallel) and returns candidate folders. Exposed for tests.</summary>
-    internal async Task<List<string>> FindCandidatesAsync(IReadOnlyList<string> roots, TezgahSettings settings, IProgress<ScanProgress>? progress, CancellationToken ct)
+    internal async Task<List<string>> FindCandidatesAsync(IReadOnlyList<string> roots, TezgahSettings settings, IProgress<ScanProgress>? progress, CancellationToken ct, IReadOnlySet<string>? excludedPaths = null)
     {
         var excluded = new HashSet<string>(settings.ExcludedDirectoryNames, StringComparer.OrdinalIgnoreCase);
+        var excludedFull = excludedPaths ?? ToolCachePaths.Value;
         var rootSet = new HashSet<string>(roots, StringComparer.OrdinalIgnoreCase);
         var found = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         var visited = 0;
@@ -184,7 +259,7 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
         var parallel = new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Clamp(roots.Count, 1, 4) };
         await Parallel.ForEachAsync(roots, parallel, (root, token) =>
         {
-            Walk(root, maxDepth, excluded, rootSet, found, ref visited, progress, token);
+            Walk(root, maxDepth, excluded, excludedFull, rootSet, found, ref visited, progress, token);
             return ValueTask.CompletedTask;
         }).ConfigureAwait(false);
 
@@ -196,19 +271,21 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
         string root,
         int maxDepth,
         HashSet<string> excluded,
+        IReadOnlySet<string> excludedPaths,
         HashSet<string> rootSet,
         ConcurrentDictionary<string, byte> found,
         ref int visited,
         IProgress<ScanProgress>? progress,
         CancellationToken ct)
     {
-        var stack = new Stack<(string Path, int Depth)>();
-        stack.Push((root, 0));
+        // GitOnly > 0: below a project or repository, only git repositories are looked for, for that many more levels.
+        var stack = new Stack<(string Path, int Depth, int GitOnly)>();
+        stack.Push((root, 0, 0));
         var subdirs = new List<string>();
         while (stack.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
-            var (dir, depth) = stack.Pop();
+            var (dir, depth, gitOnly) = stack.Pop();
             var n = Interlocked.Increment(ref visited);
             if (n % 500 == 0)
             {
@@ -253,7 +330,13 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
                         continue;
                     }
 
-                    subdirs.Add(Path.Combine(dir, e.Name));
+                    var sub = Path.Combine(dir, e.Name);
+                    if (excludedPaths.Contains(sub))
+                    {
+                        continue; // tool-owned tree (module cache, package manager buckets...)
+                    }
+
+                    subdirs.Add(sub);
                 }
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
@@ -263,15 +346,40 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
             }
 
             var isRoot = depth == 0;
-            if ((hasGit || strong || weak) && !(isRoot && IsContainerFolder(dir)))
+            if (gitOnly > 0)
+            {
+                // Only repositories count down here; markers of the enclosing project's own sub-packages do not.
+                if (hasGit)
+                {
+                    found.TryAdd(dir, 0);
+                    continue;
+                }
+            }
+            else if ((hasGit || strong || weak) && !(isRoot && IsContainerFolder(dir)))
             {
                 found.TryAdd(dir, 0);
             }
 
-            // Repositories and strong projects end the descent (except at a scan root itself).
-            if (!isRoot && (hasGit || strong))
+            int childGitOnly;
+            if (gitOnly > 0)
             {
-                continue;
+                childGitOnly = gitOnly - 1;
+                if (childGitOnly == 0)
+                {
+                    continue;
+                }
+            }
+            else if (!isRoot && hasGit)
+            {
+                childGitOnly = 1; // direct child repositories of a repository (e.g. a notes repo holding clones)
+            }
+            else if (!isRoot && strong)
+            {
+                childGitOnly = 2; // sibling repositories under a workspace folder (docker-compose.yml, .sln...)
+            }
+            else
+            {
+                childGitOnly = 0;
             }
 
             if (depth >= maxDepth)
@@ -286,7 +394,7 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
                     continue; // walked separately with its own depth budget
                 }
 
-                stack.Push((sub, depth + 1));
+                stack.Push((sub, depth + 1, childGitOnly));
             }
         }
     }
