@@ -992,6 +992,7 @@ internal sealed partial class UninstallService(
             Kind = UninstallStepKind.StopProcesses,
             Path = path,
             Description = L.T($"Bu klasörden çalışan işlemleri durdur ({total})", $"Stop processes running from this folder ({total})"),
+            ShownProcesses = [.. external],
         });
         if (external.Count > 0)
         {
@@ -1182,7 +1183,7 @@ internal sealed partial class UninstallService(
         switch (step.Kind)
         {
             case UninstallStepKind.StopProcesses:
-                await StopProcessesAsync(context.ItemId, step.Path, ct).ConfigureAwait(false);
+                await StopProcessesAsync(context.ItemId, step.Path, step.ShownProcesses, ct).ConfigureAwait(false);
                 break;
 
             case UninstallStepKind.RunCommand:
@@ -1294,7 +1295,7 @@ internal sealed partial class UninstallService(
         return !File.Exists(file);
     }
 
-    private async Task StopProcessesAsync(string itemId, string? path, CancellationToken ct)
+    private async Task StopProcessesAsync(string itemId, string? path, ImmutableArray<FoundProcess> shown, CancellationToken ct)
     {
         foreach (var run in runService.ForItem(itemId))
         {
@@ -1306,8 +1307,20 @@ internal sealed partial class UninstallService(
             return;
         }
 
+        // Only the processes the user saw in the plan are stopped. One that started from the folder since then was never
+        // shown (its unsaved work was not part of the confirmation): refuse instead of killing it.
+        var current = processFinder.FindUnder(path);
+        var unseen = current.Where(p => !shown.Contains(p)).ToList();
+        if (unseen.Count > 0)
+        {
+            var names = string.Join(", ", unseen.Take(5).Select(p => $"{Path.GetFileName(p.ImagePath)} ({p.ProcessId.ToString(CultureInfo.InvariantCulture)})"));
+            throw new InvalidOperationException(L.T(
+                $"Plan hazırlandıktan sonra bu klasörden yeni işlemler başladı; hiçbir şey kapatılmadı. Kaldırmayı yeniden açıp gözden geçirin: {names}",
+                $"New processes started from this folder after the plan was made; nothing was closed. Reopen the removal and review it: {names}"));
+        }
+
         var failed = new List<string>();
-        foreach (var process in processFinder.FindUnder(path))
+        foreach (var process in current)
         {
             if (!processFinder.TryKill(process, path))
             {

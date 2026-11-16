@@ -998,7 +998,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var vm = new CleanupViewModel(item.Item, _cleanup, _s);
+        var vm = new CleanupViewModel(item.Item, _cleanup, _s, permanentDelete: !_catalog.State.Settings.UseRecycleBin);
         _dialogs.ShowCleanup(vm);
         if (vm.FreedBytes > 0)
         {

@@ -37,6 +37,12 @@ public sealed record UninstallStep
     /// leftovers, name-matched virtualenvs): the user has to opt in.
     /// </summary>
     public bool DefaultSelected { get; init; } = true;
+
+    /// <summary>
+    /// StopProcesses: the external processes counted and named in the plan. Execution stops only these; anything that
+    /// started from the folder after planning refuses the step instead of being killed unseen.
+    /// </summary>
+    internal System.Collections.Immutable.ImmutableArray<Execution.FoundProcess> ShownProcesses { get; init; } = [];
 }
 
 public enum WarningLevel

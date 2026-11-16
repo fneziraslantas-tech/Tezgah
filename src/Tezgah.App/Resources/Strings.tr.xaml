@@ -169,6 +169,7 @@
     <!-- temizlik -->
     <sys:String x:Key="Cleanup_Title">{0}: alan aç</sys:String>
     <sys:String x:Key="Cleanup_Explain">Bu klasörler genellikle kurulum/derleme sırasında oluşur ve yeniden oluşturulabilir (ör. npm install, pip install). "build", "dist" ve "out" bazen elle hazırlanmış dosyalar içerir: varsayılan olarak seçili değildir ve git deposunda yalnızca içindekilerin tamamı git tarafından yok sayılıyorsa temizlenir.</sys:String>
+    <sys:String x:Key="Cleanup_Permanent">Ayarlarda Geri Dönüşüm Kutusu kapalı: seçilen klasörler kalıcı olarak silinir ve geri getirilemez.</sys:String>
     <sys:String x:Key="Cleanup_Total">Seçilen: {0}</sys:String>
     <sys:String x:Key="Cleanup_Confirm">Temizle</sys:String>
     <sys:String x:Key="Cleanup_Done">{0} boşaltıldı.</sys:String>
