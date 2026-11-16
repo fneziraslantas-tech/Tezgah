@@ -68,24 +68,34 @@ public sealed class ShellService(ILogger<ShellService> logger) : IShellService
             return false;
         }
 
-        var wt = ResolveExecutable("wt.exe");
-        if (wt is not null)
+        var psi = BuildTerminalStartInfo(ResolveExecutable("wt.exe"), ResolveExecutable("pwsh.exe") ?? ResolveExecutable("powershell.exe"), full);
+        return psi is not null && TryStart(psi);
+    }
+
+    /// <summary>
+    /// Windows Terminal parses its own argument vector: an unescaped ';' (even inside one argument) starts a new
+    /// subcommand whose text becomes a command line, and '%' is expanded. The folder path therefore never goes on wt's
+    /// command line: wt gets "-d ." and the folder as its working directory. Paths containing ';' or '%' skip wt
+    /// entirely and use PowerShell, which takes nothing but the working directory.
+    /// </summary>
+    internal static ProcessStartInfo? BuildTerminalStartInfo(string? wt, string? shell, string full)
+    {
+        if (wt is not null && full.IndexOfAny([';', '%']) < 0)
         {
-            var psi = new ProcessStartInfo(wt) { UseShellExecute = false };
+            var psi = new ProcessStartInfo(wt) { UseShellExecute = false, WorkingDirectory = full };
             psi.ArgumentList.Add("-d");
-            psi.ArgumentList.Add(full);
-            return TryStart(psi);
+            psi.ArgumentList.Add(".");
+            return psi;
         }
 
-        var shell = ResolveExecutable("pwsh.exe") ?? ResolveExecutable("powershell.exe");
         if (shell is null)
         {
-            return false;
+            return null;
         }
 
         var ps = new ProcessStartInfo(shell) { UseShellExecute = false, WorkingDirectory = full };
         ps.ArgumentList.Add("-NoLogo");
-        return TryStart(ps);
+        return ps;
     }
 
     public bool OpenInVsCode(string path)
