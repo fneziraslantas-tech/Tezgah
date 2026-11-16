@@ -33,12 +33,14 @@ public class ProcessTreeTests
     public async Task Default_mode_still_kills_leftovers_when_the_root_exits()
     {
         using var dir = new TempDir();
-        var (launcher, marker) = WriteLauncher(dir, 3);
+        // The worker writes its marker after ~8 s; under load the root's exit can take seconds, so a short
+        // worker delay made this test racy. The leftover must be killed long before the marker is due.
+        var (launcher, marker) = WriteLauncher(dir, 9);
 
         var result = await new CommandExecutor().RunAsync(Specs.Command(launcher, dir.Path), TimeSpan.FromSeconds(60), CancellationToken.None);
 
         Assert.True(result.Success, result.StdErr);
-        await Task.Delay(4000);
+        await Task.Delay(9500);
         Assert.False(File.Exists(marker));
     }
 

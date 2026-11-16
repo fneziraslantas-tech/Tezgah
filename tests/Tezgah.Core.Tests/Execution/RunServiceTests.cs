@@ -67,7 +67,7 @@ public class RunServiceTests
         catalog.Profiles[item.Id] = [profile];
         await using var service = new RunService(catalog, PathGuard.Default, new ProcessHost());
         var changes = 0;
-        service.RunningChanged += (_, _) => changes++;
+        service.RunningChanged += (_, _) => Interlocked.Increment(ref changes);
 
         // The caller passes a tampered command under a known id: the catalog's command is what runs.
         var tampered = profile with { Command = profile.Command with { Arguments = ["-n", "1", "10.255.255.1"] } };
@@ -81,7 +81,15 @@ public class RunServiceTests
         await service.StopAllAsync(CancellationToken.None);
         Assert.Empty(service.Running);
         Assert.True(run.HasExited);
-        Assert.True(changes >= 2);
+
+        // RunningChanged is raised on a background thread; the removal notification may land just after StopAllAsync.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Volatile.Read(ref changes) < 2 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.True(Volatile.Read(ref changes) >= 2);
     }
 
     [Fact]
