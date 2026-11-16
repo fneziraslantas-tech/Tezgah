@@ -1,0 +1,4 @@
+# Test code: descriptive Method_Scenario names and inline expected arrays are intentional.
+[*.cs]
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1861.severity = none
