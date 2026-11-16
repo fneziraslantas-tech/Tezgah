@@ -15,7 +15,8 @@
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <!-- The release publishes win-x64: its restore graph must be in the lock files too. -->
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <Version>0.1.0</Version>
+    <!-- Local builds only: release.yml passes -p:Version from the vX.Y.Z tag. -->
+    <Version>0.1.2-dev</Version>
     <Authors>Tezgah contributors</Authors>
     <Product>Tezgah</Product>
     <Copyright>Copyright © 2026 Tezgah contributors</Copyright>

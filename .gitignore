@@ -5,6 +5,14 @@
 
 # dotenv files
 .env
+.env.*
+!.env.example
+
+# Keys and certificates (signing keys must never be committed)
+*.pem
+*.key
+*.pfx
+*.snk
 
 # User-specific files
 *.rsuser
