@@ -14,6 +14,15 @@ internal sealed unsafe class JobObject : IDisposable
     private readonly SafeJobHandle _handle;
 
     public JobObject()
+        : this(killOnClose: true)
+    {
+    }
+
+    /// <param name="killOnClose">
+    /// False only for vendor uninstallers: processes they leave behind on purpose (a browser with a survey page, an Explorer
+    /// restart, a tray helper) must survive Tezgah closing the job. Such jobs are never terminated as a whole.
+    /// </param>
+    public JobObject(bool killOnClose)
     {
         _handle = NativeMethods.CreateJobObject(0, null);
         if (_handle.IsInvalid)
@@ -23,7 +32,7 @@ internal sealed unsafe class JobObject : IDisposable
 
         var info = new JobObjectExtendedLimitInformation
         {
-            BasicLimitInformation = new JobObjectBasicLimitInformation { LimitFlags = NativeMethods.JobObjectLimitKillOnJobClose },
+            BasicLimitInformation = new JobObjectBasicLimitInformation { LimitFlags = killOnClose ? NativeMethods.JobObjectLimitKillOnJobClose : 0 },
         };
         if (!NativeMethods.SetInformationJobObject(_handle, NativeMethods.JobObjectExtendedLimitInformationClass, &info, (uint)sizeof(JobObjectExtendedLimitInformation)))
         {
@@ -61,6 +70,41 @@ internal sealed unsafe class JobObject : IDisposable
             return NativeMethods.QueryInformationJobObject(_handle, NativeMethods.JobObjectBasicAccountingInformationClass, &info, (uint)sizeof(JobObjectBasicAccountingInformation), 0)
                 ? (int)info.ActiveProcesses
                 : null;
+        }
+    }
+
+    /// <summary>Ids of the processes currently in the job, or null when the job cannot be queried.</summary>
+    public IReadOnlyList<int>? ProcessIds
+    {
+        get
+        {
+            if (_handle.IsClosed || _handle.IsInvalid)
+            {
+                return null;
+            }
+
+            // JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORD counters, then ULONG_PTR ids (pointer-aligned, offset 8 on both ABIs).
+            const int capacity = 1024;
+            var bytes = 8 + (capacity * sizeof(nuint));
+            var buffer = new byte[bytes];
+            fixed (byte* p = buffer)
+            {
+                *(uint*)p = capacity;
+                if (!NativeMethods.QueryInformationJobObject(_handle, NativeMethods.JobObjectBasicProcessIdListClass, p, (uint)bytes, 0))
+                {
+                    return null;
+                }
+
+                var count = Math.Min(*(uint*)(p + 4), capacity);
+                var ids = new List<int>((int)count);
+                var list = (nuint*)(p + 8);
+                for (var i = 0; i < count; i++)
+                {
+                    ids.Add((int)list[i]);
+                }
+
+                return ids;
+            }
         }
     }
 

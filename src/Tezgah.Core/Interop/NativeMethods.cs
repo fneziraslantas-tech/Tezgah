@@ -123,6 +123,7 @@ internal struct JobObjectBasicAccountingInformation
 internal static unsafe partial class NativeMethods
 {
     public const int JobObjectBasicAccountingInformationClass = 1;
+    public const int JobObjectBasicProcessIdListClass = 3;
     public const int JobObjectExtendedLimitInformationClass = 9;
     public const uint JobObjectLimitKillOnJobClose = 0x00002000;
 
