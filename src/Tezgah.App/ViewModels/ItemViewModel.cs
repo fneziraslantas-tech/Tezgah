@@ -129,11 +129,28 @@ public sealed partial class ItemViewModel : ObservableObject
 
     public string BranchText => Item.Git?.Branch ?? string.Empty;
 
-    public string AheadBehindText => Item.Git is { } g ? $"↑{g.Ahead}  ↓{g.Behind}" : string.Empty;
+    /// <summary>
+    /// The repository was read without git (untrusted, or not validated for the git CLI): working-tree counts are not known
+    /// and must not be shown as 0.
+    /// </summary>
+    public bool IsGitStateUnknown => Item.Git?.StatusUnknown == true;
 
-    public string WorkingTreeText => Item.Git is { } g
-        ? _s.Format("Git_WorkingTree", g.ModifiedFiles, g.UntrackedFiles, g.Stashes)
-        : string.Empty;
+    public string AheadBehindText => Item.Git switch
+    {
+        { AheadBehindUnknown: true } => "↑?  ↓?",
+        { } g => $"↑{g.Ahead}  ↓{g.Behind}",
+        _ => string.Empty,
+    };
+
+    /// <summary>Stash count is real either way (read from the stash reflog); modified/untracked only when git ran.</summary>
+    public string WorkingTreeText => Item.Git switch
+    {
+        { StatusUnknown: true } g => _s.Format("Git_WorkingTreeUnknown", g.Stashes),
+        { } g => _s.Format("Git_WorkingTree", g.ModifiedFiles, g.UntrackedFiles, g.Stashes),
+        _ => string.Empty,
+    };
+
+    public string GitStateUnknownText => IsGitStateUnknown ? _s.Text("Git_StateUnknownHint") : string.Empty;
 
     public string? LastCommitText => Item.Git is { LastCommitSubject: { } subj } g
         ? $"“{subj}” · {Formatting.Relative(g.LastCommitAt, _now, _s)}"

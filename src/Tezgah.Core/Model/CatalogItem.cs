@@ -127,6 +127,12 @@ public sealed record GitInfo
     /// </summary>
     public bool StatusUnknown { get; init; }
 
+    /// <summary>
+    /// The checked-out branch has an upstream but <see cref="Ahead"/>/<see cref="Behind"/> could not be proven (git was not
+    /// run and the commits are packed): both are 0 then, which must not be shown as "in sync".
+    /// </summary>
+    public bool AheadBehindUnknown { get; init; }
+
     /// <summary>Unsaved work that was actually observed (for display; deletion safety uses <see cref="HasUnsavedWork"/>).</summary>
     public bool HasKnownUnsavedWork =>
         ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || ((!HasUpstream || UpstreamGone) && HasCommits) ||

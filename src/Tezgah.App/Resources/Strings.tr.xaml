@@ -102,6 +102,8 @@
     <sys:String x:Key="Git_NoUpstream">uzak dal yok, commit'ler yalnız bu bilgisayarda</sys:String>
     <sys:String x:Key="Git_Dirty">kaydedilmemiş değişiklik var</sys:String>
     <sys:String x:Key="Git_WorkingTree">{0} değişen · {1} izlenmeyen · {2} stash</sys:String>
+    <sys:String x:Key="Git_WorkingTreeUnknown">çalışma ağacı denetlenmedi · {0} stash</sys:String>
+    <sys:String x:Key="Git_StateUnknownHint">git çalıştırılmadan okundu (depoya güvenilmedi ya da git güvenle çalıştırılamadı): kaydedilmemiş değişiklikler ve gönderilmemiş commit'ler bilinmiyor. Tüm durumu okumak için depoya güvenin.</sys:String>
     <sys:String x:Key="Git_Pull">Güncelle (git pull)</sys:String>
     <sys:String x:Key="Git_Fetch">Uzak depoyu kontrol et (git fetch)</sys:String>
     <sys:String x:Key="Git_PullDone">{0} güncellendi. {1}</sys:String>

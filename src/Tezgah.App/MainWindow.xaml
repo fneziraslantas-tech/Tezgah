@@ -425,6 +425,8 @@
                                 <TextBlock Text="{Binding AttentionText}" Margin="0,5,0,0" FontWeight="SemiBold" FontSize="12"
                                            Foreground="{DynamicResource SystemFillColorCautionBrush}"
                                            Visibility="{Binding HasUnsavedWork, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Text="{Binding GitStateUnknownText}" Style="{StaticResource Muted}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Visibility="{Binding IsGitStateUnknown, Converter={StaticResource BoolToVis}}" />
                                 <TextBlock Text="{Binding LastCommitText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">

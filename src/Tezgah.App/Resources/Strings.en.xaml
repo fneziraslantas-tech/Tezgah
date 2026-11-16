@@ -102,6 +102,8 @@
     <sys:String x:Key="Git_NoUpstream">no upstream, commits exist only on this computer</sys:String>
     <sys:String x:Key="Git_Dirty">uncommitted changes</sys:String>
     <sys:String x:Key="Git_WorkingTree">{0} modified · {1} untracked · {2} stash</sys:String>
+    <sys:String x:Key="Git_WorkingTreeUnknown">working tree not checked · {0} stash</sys:String>
+    <sys:String x:Key="Git_StateUnknownHint">Read without running git (repository not trusted, or not safe to run git on): uncommitted changes and unpushed commits are unknown. Trust the repository to read its full state.</sys:String>
     <sys:String x:Key="Git_Pull">Update (git pull)</sys:String>
     <sys:String x:Key="Git_Fetch">Check remote (git fetch)</sys:String>
     <sys:String x:Key="Git_PullDone">{0} updated. {1}</sys:String>

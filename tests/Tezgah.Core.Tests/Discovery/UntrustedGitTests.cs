@@ -421,6 +421,36 @@ public sealed class UntrustedGitTests : IDisposable
         Assert.True(moved.HasCommits);
     }
 
+    [Fact]
+    public void Unprovable_ahead_behind_is_reported_as_unknown_not_in_sync()
+    {
+        // Reviewer PoC: a clone that is behind its upstream with packed commits read Ahead=0/Behind=0 ("in sync").
+        var source = _dir.Sub("absrc");
+        if (!TestTools.GitInitWithCommit(source))
+        {
+            return;
+        }
+
+        File.WriteAllText(Path.Combine(source, "two.txt"), "2");
+        Assert.Equal(0, TestTools.Run("git", source, "add", "-A"));
+        Assert.Equal(0, TestTools.Run("git", source, "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "two"));
+        var clone = Path.Combine(_dir.Path, "abclone");
+        Assert.Equal(0, TestTools.Run("git", _dir.Path, "clone", "-q", "--no-local", source, clone));
+
+        var synced = GitMetadataReader.Read(clone)!;
+        Assert.False(synced.AheadBehindUnknown); // HEAD == upstream: proven
+
+        Assert.Equal(0, TestTools.Run("git", clone, "reset", "-q", "--hard", "HEAD~1")); // behind 1, commits packed
+        var behind = GitMetadataReader.Read(clone)!;
+        Assert.Equal(0, behind.Ahead);
+        Assert.Equal(0, behind.Behind);
+        Assert.True(behind.AheadBehindUnknown);
+
+        var noUpstream = _dir.Sub("abnone");
+        Assert.True(TestTools.GitInitWithCommit(noUpstream));
+        Assert.False(GitMetadataReader.Read(noUpstream)!.AheadBehindUnknown);
+    }
+
     private static async Task AssertRefusedWithoutGitAsync(string repo)
     {
         // Uninstall planning path: the guard refuses, so no git process runs and the state is unknown (fail closed).

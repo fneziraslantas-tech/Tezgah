@@ -117,6 +117,7 @@ internal static class GitMetadataReader
             // Ahead/behind only when it can be proven from loose commits; otherwise "unknown" (UnpushedCommits = null).
             var ahead = 0;
             var behind = 0;
+            var aheadBehindKnown = !hasUpstream || upstreamGone;
             int? unpushed = null;
             if (headId is null)
             {
@@ -126,16 +127,19 @@ internal static class GitMetadataReader
             {
                 if (headId == upstreamId)
                 {
+                    aheadBehindKnown = true;
                     unpushed = AllLocalBranchesOnRemotes() ? 0 : null;
                 }
                 else if (Distance(headId, upstreamId) is { } a)
                 {
                     ahead = a;
+                    aheadBehindKnown = true;
                     unpushed = AllLocalBranchesOnRemotes(except: branch) ? a : null;
                 }
                 else if (Distance(upstreamId, headId) is { } b)
                 {
                     behind = b;
+                    aheadBehindKnown = true;
                     unpushed = AllLocalBranchesOnRemotes() ? 0 : null;
                 }
             }
@@ -157,6 +161,7 @@ internal static class GitMetadataReader
                 LastCommitAt = lastAt,
                 LastCommitSubject = subject,
                 HasCommits = headId is not null,
+                AheadBehindUnknown = !aheadBehindKnown,
                 UnpushedCommits = unpushed,
                 LinkedWorktrees = LinkedWorktrees(worktree),
                 StatusUnknown = true,
