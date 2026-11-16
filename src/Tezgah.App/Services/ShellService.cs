@@ -1,12 +1,13 @@
 using System.Diagnostics;
 using System.IO;
 using Microsoft.Extensions.Logging;
+using Tezgah.Core.Execution;
 
 namespace Tezgah.App.Services;
 
 /// <summary>
-/// Opens URLs, folders, terminals and editors. Kept in one file so it can be swapped for
-/// <c>Tezgah.Core.Execution.ShellOpener</c> once the core provides it.
+/// Opens URLs, folders, terminals and editors. URL and folder opening is delegated to the core's guarded
+/// <see cref="ShellOpener"/> (the only place allowed to use UseShellExecute).
 /// Rules: only absolute http/https URLs are shell-executed; folders must exist; external programs are
 /// started with <see cref="ProcessStartInfo.ArgumentList"/> (never a command string, never cmd.exe).
 /// </summary>
@@ -33,13 +34,13 @@ public sealed class ShellService(ILogger<ShellService> logger) : IShellService
     public bool OpenUrl(Uri url)
     {
         ArgumentNullException.ThrowIfNull(url);
-        if (!url.IsAbsoluteUri || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
+        if (!ShellOpener.OpenUrl(url.IsAbsoluteUri ? url.AbsoluteUri : url.OriginalString, out var error))
         {
-            logger.LogWarning("Refused to open non-http URL {Url}", url);
+            logger.LogWarning("Refused to open URL {Url}: {Error}", url, error);
             return false;
         }
 
-        return TryStart(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true });
+        return true;
     }
 
     public bool OpenFolder(string path)
@@ -50,9 +51,13 @@ public sealed class ShellService(ILogger<ShellService> logger) : IShellService
             return false;
         }
 
-        var psi = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")) { UseShellExecute = false };
-        psi.ArgumentList.Add(full);
-        return TryStart(psi);
+        if (!ShellOpener.OpenFolder(full, out var error))
+        {
+            logger.LogWarning("Refused to open folder {Path}: {Error}", full, error);
+            return false;
+        }
+
+        return true;
     }
 
     public bool OpenTerminal(string path)
@@ -78,7 +83,7 @@ public sealed class ShellService(ILogger<ShellService> logger) : IShellService
             return false;
         }
 
-        var ps = new ProcessStartInfo(shell) { UseShellExecute = true, WorkingDirectory = full };
+        var ps = new ProcessStartInfo(shell) { UseShellExecute = false, WorkingDirectory = full };
         ps.ArgumentList.Add("-NoLogo");
         return TryStart(ps);
     }
