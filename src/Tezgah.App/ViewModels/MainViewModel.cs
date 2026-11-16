@@ -343,7 +343,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             {
                 var wasRunning = run.IsRunning;
                 run.Flush();
-                anyExited |= wasRunning && !run.IsRunning;
+                var exited = wasRunning && !run.IsRunning;
+                anyExited |= exited;
+                if (exited && run.Process.Profile.Kind == RunProfileKind.Setup && run.Process.ExitCode == 0)
+                {
+                    _ = RefreshAfterSetupAsync(item);
+                }
             }
         }
 
@@ -357,6 +362,26 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
             UpdateStatus();
         }
+    }
+
+    /// <summary>A successful setup (venv, pip/poetry install...) changes which interpreter the run profiles should use.</summary>
+    private async Task RefreshAfterSetupAsync(ItemViewModel item)
+    {
+        if (item.IsBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            await _catalog.RefreshItemAsync(item.Id, fetchGit: false, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _log.LogWarning(ex, "Refresh after setup failed for {Item}", item.Id);
+        }
+
+        SyncFromCatalog();
     }
 
     // ───────────────────────────── filtering ─────────────────────────────

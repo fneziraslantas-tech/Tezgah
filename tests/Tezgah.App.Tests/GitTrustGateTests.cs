@@ -9,7 +9,7 @@ namespace Tezgah.App.Tests;
 /// <summary>git pull / fetch honour repository-controlled config and hooks, so they go through the workspace-trust gate.</summary>
 public class GitTrustGateTests
 {
-    private sealed class RecordingGit(IGitClient inner) : IGitClient
+    internal sealed class RecordingGit(IGitClient inner) : IGitClient
     {
         public int Pulls { get; private set; }
 
@@ -24,7 +24,7 @@ public class GitTrustGateTests
         }
     }
 
-    private sealed class RecordingCatalog(DemoCatalogService inner) : ICatalogService
+    internal sealed class RecordingCatalog(DemoCatalogService inner) : ICatalogService
     {
         public List<bool> RefreshFetches { get; } = [];
 
@@ -42,9 +42,12 @@ public class GitTrustGateTests
 
         public Task ScanAsync(IProgress<ScanProgress>? progress, CancellationToken ct) => inner.ScanAsync(progress, ct);
 
+        public List<string> Refreshed { get; } = [];
+
         public Task RefreshItemAsync(string itemId, bool fetchGit, CancellationToken ct)
         {
             RefreshFetches.Add(fetchGit);
+            Refreshed.Add(itemId);
             return Task.CompletedTask;
         }
 
@@ -66,15 +69,19 @@ public class GitTrustGateTests
         public bool IsForgotten(CatalogItem item) => inner.IsForgotten(item);
     }
 
-    private static (MainViewModel Vm, FakeDialogs Dialogs, RecordingGit Git, RecordingCatalog Catalog) Build()
+    [ThreadStatic]
+    private static InlineDispatcher? LastUi;
+
+    internal static (MainViewModel Vm, FakeDialogs Dialogs, RecordingGit Git, RecordingCatalog Catalog) Build()
     {
         var demo = new DemoCatalogService(new DemoOptions(false));
         var catalog = new RecordingCatalog(demo);
         var runs = new DemoRunService(demo);
         var git = new RecordingGit(new DemoGitClient(demo));
         var dialogs = new FakeDialogs();
+        LastUi = new InlineDispatcher();
         var vm = new MainViewModel(catalog, runs, new DemoUninstallService(demo, runs), new DemoCleanupService(demo), git,
-            dialogs, new FakeShell(), new FakeClipboard(), new KeyStrings(), new InlineDispatcher(), new FakeAppearance(), new AppMode(true));
+            dialogs, new FakeShell(), new FakeClipboard(), new KeyStrings(), LastUi, new FakeAppearance(), new AppMode(true));
         return (vm, dialogs, git, catalog);
     }
 
@@ -119,6 +126,26 @@ public class GitTrustGateTests
         await vm.RefreshItemCommand.ExecuteAsync(null);
 
         Assert.Equal([false, true], catalog.RefreshFetches);
+    }
+
+    [Fact]
+    public async Task Successful_setup_run_refreshes_the_item_so_profiles_see_the_new_environment()
+    {
+        var (vm, _, _, catalog) = Build();
+        var ui = LastUi!;
+        await vm.InitializeAsync();
+        var item = vm.AllItems.First(i => i.IsTrusted && i.Profiles.Any(p => p.Kind == RunProfileKind.Setup));
+        var setup = item.Profiles.First(p => p.Kind == RunProfileKind.Setup).Profile;
+
+        var session = await vm.StartAsync(item, setup);
+        Assert.NotNull(session);
+        for (var i = 0; i < 100 && !catalog.Refreshed.Contains(item.Id); i++)
+        {
+            await Task.Delay(50);
+            ui.Tick();
+        }
+
+        Assert.Contains(item.Id, catalog.Refreshed);
     }
 
     [Fact]

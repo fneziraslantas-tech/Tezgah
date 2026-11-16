@@ -31,13 +31,13 @@ internal sealed partial class PythonDetector : IProjectDetector
         }
 
         var venvPython = FindVenvPython(directory);
-        var python = venvPython ?? "python";
+        var python = ResolveRunner(directory, venvPython);
         var profiles = new List<RunProfile>();
 
         if (hasManage)
         {
             profiles.Add(FsUtil.Profile("py:django", "Django runserver", RunProfileKind.Run, ProjectType,
-                FsUtil.Spec(python, directory, "manage.py", "runserver"), isDefault: true));
+                python.Spec(directory, "manage.py", "runserver"), isDefault: true));
         }
 
         foreach (var entry in entries.Take(4))
@@ -45,14 +45,14 @@ internal sealed partial class PythonDetector : IProjectDetector
             profiles.Add(EntryProfile(directory, python, entry, isDefault: profiles.Count == 0));
         }
 
-        AddConsoleScriptProfiles(directory, venvPython, profiles);
+        AddConsoleScriptProfiles(directory, venvPython, python, profiles);
 
         AddSetupProfiles(directory, venvPython, profiles);
 
         if (Directory.Exists(Path.Combine(directory, "tests")) || File.Exists(Path.Combine(directory, "pytest.ini")) ||
             File.Exists(Path.Combine(directory, "conftest.py")))
         {
-            profiles.Add(FsUtil.Profile("py:pytest", "pytest", RunProfileKind.Test, ProjectType, FsUtil.Spec(python, directory, "-m", "pytest")));
+            profiles.Add(FsUtil.Profile("py:pytest", "pytest", RunProfileKind.Test, ProjectType, python.Spec(directory, "-m", "pytest")));
         }
 
         var artifacts = FsUtil.Artifacts(directory, "python", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", "build", "dist");
@@ -62,6 +62,42 @@ internal sealed partial class PythonDetector : IProjectDetector
         }
 
         return new ProjectDetection(ProjectType, profiles, artifacts, ReadDescription(directory));
+    }
+
+    /// <summary>How to start the project's interpreter: <c>python</c> plus a prefix (e.g. <c>poetry run</c>).</summary>
+    internal sealed record PythonRunner(string FileName, string[] Prefix)
+    {
+        public CommandSpec Spec(string directory, params string[] args) => FsUtil.Spec(FileName, directory, [.. Prefix, .. args]);
+    }
+
+    /// <summary>
+    /// The project's own interpreter: an in-project venv wins; otherwise the package manager's environment (uv, Poetry and
+    /// pipenv keep their venvs outside the project, so a bare global "python" would never see the installed packages).
+    /// </summary>
+    internal static PythonRunner ResolveRunner(string directory, string? venvPython)
+    {
+        if (venvPython is not null)
+        {
+            return new PythonRunner(venvPython, []);
+        }
+
+        if (File.Exists(Path.Combine(directory, "uv.lock")))
+        {
+            return new PythonRunner("uv", ["run", "python"]);
+        }
+
+        if (File.Exists(Path.Combine(directory, "poetry.lock")) ||
+            (FsUtil.ReadText(Path.Combine(directory, "pyproject.toml")) is { } pyproject && pyproject.Contains("[tool.poetry]", StringComparison.Ordinal)))
+        {
+            return new PythonRunner("poetry", ["run", "python"]);
+        }
+
+        if (File.Exists(Path.Combine(directory, "Pipfile")))
+        {
+            return new PythonRunner("pipenv", ["run", "python"]);
+        }
+
+        return new PythonRunner("python", []);
     }
 
     private void AddSetupProfiles(string directory, string? venvPython, List<RunProfile> profiles)
@@ -108,7 +144,7 @@ internal sealed partial class PythonDetector : IProjectDetector
                 FsUtil.Spec(targetPython, directory, "-m", "pip", "install", "-e", ".")));
     }
 
-    private RunProfile EntryProfile(string directory, string python, string entry, bool isDefault)
+    private RunProfile EntryProfile(string directory, PythonRunner python, string entry, bool isDefault)
     {
         var source = FsUtil.ReadHead(Path.Combine(directory, entry)) ?? string.Empty;
         var module = Path.GetFileNameWithoutExtension(entry);
@@ -117,7 +153,7 @@ internal sealed partial class PythonDetector : IProjectDetector
         if (StreamlitImport().IsMatch(source))
         {
             return FsUtil.Profile(id, $"streamlit run {entry}", RunProfileKind.Run, ProjectType,
-                FsUtil.Spec(python, directory, "-m", "streamlit", "run", entry), isDefault);
+                python.Spec(directory, "-m", "streamlit", "run", entry), isDefault);
         }
 
         var fastApi = FastApiApp().Match(source);
@@ -125,25 +161,25 @@ internal sealed partial class PythonDetector : IProjectDetector
         {
             var target = $"{module}:{fastApi.Groups["var"].Value}";
             return FsUtil.Profile(id, $"uvicorn {target}", RunProfileKind.Run, ProjectType,
-                FsUtil.Spec(python, directory, "-m", "uvicorn", target, "--reload"), isDefault);
+                python.Spec(directory, "-m", "uvicorn", target, "--reload"), isDefault);
         }
 
         var flask = FlaskApp().Match(source);
         if (flask.Success && !source.Contains(".run(", StringComparison.Ordinal))
         {
             return FsUtil.Profile(id, $"flask --app {module} run", RunProfileKind.Run, ProjectType,
-                FsUtil.Spec(python, directory, "-m", "flask", "--app", module, "run"), isDefault);
+                python.Spec(directory, "-m", "flask", "--app", module, "run"), isDefault);
         }
 
         // Gradio apps, scripts with __main__ blocks and Flask/FastAPI apps that start themselves.
-        return FsUtil.Profile(id, $"python {entry}", RunProfileKind.Run, ProjectType, FsUtil.Spec(python, directory, entry), isDefault);
+        return FsUtil.Profile(id, $"python {entry}", RunProfileKind.Run, ProjectType, python.Spec(directory, entry), isDefault);
     }
 
     /// <summary>
     /// <c>[project.scripts]</c> / <c>[tool.poetry.scripts]</c> entry points: run the installed launcher from the venv
     /// (<c>.venv\Scripts\name.exe</c>) or, for uv projects, <c>uv run name</c>.
     /// </summary>
-    private void AddConsoleScriptProfiles(string directory, string? venvPython, List<RunProfile> profiles)
+    private void AddConsoleScriptProfiles(string directory, string? venvPython, PythonRunner runner, List<RunProfile> profiles)
     {
         var pyproject = FsUtil.ReadText(Path.Combine(directory, "pyproject.toml"));
         if (pyproject is null)
@@ -165,6 +201,10 @@ internal sealed partial class PythonDetector : IProjectDetector
             else if (isUv)
             {
                 profiles.Add(FsUtil.Profile(id, $"uv run {name}", RunProfileKind.Run, ProjectType, FsUtil.Spec("uv", directory, "run", name), isDefault));
+            }
+            else if (runner.FileName is "poetry" or "pipenv")
+            {
+                profiles.Add(FsUtil.Profile(id, $"{runner.FileName} run {name}", RunProfileKind.Run, ProjectType, FsUtil.Spec(runner.FileName, directory, "run", name), isDefault));
             }
         }
     }
