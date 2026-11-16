@@ -208,6 +208,9 @@ public sealed class DemoCatalogService : ICatalogService
 
     public UserMeta GetMeta(string itemId) => State.Meta.GetValueOrDefault(itemId) ?? new UserMeta();
 
+    /// <summary>Demo folders do not exist on disk: the recorded clone source is taken as is.</summary>
+    public string? VerifiedCloneSource(string itemId) => GetMeta(itemId).ClonedFrom;
+
     public IReadOnlyList<RunProfile> GetProfiles(string itemId)
     {
         var item = State.Items.FirstOrDefault(i => i.Id == itemId);

@@ -27,10 +27,11 @@ internal sealed class RunService(ICatalogService catalog, IPathGuard pathGuard, 
         }
     }
 
-    public async Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CancellationToken ct)
+    public async Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CommandSpec expectedCommand, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(itemId);
         ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(expectedCommand);
 
         // Checked against the live folder: a trusted folder deleted and replaced since the last scan is not trusted.
         if (!catalog.IsTrusted(itemId))
@@ -46,6 +47,13 @@ internal sealed class RunService(ICatalogService catalog, IPathGuard pathGuard, 
             throw new InvalidOperationException(L.T(
                 $"Bu çalıştırma profili öğeye ait değil: {profile.Label}",
                 $"This run profile does not belong to the item: {profile.Label}"));
+        }
+
+        // Profile ids are not bound to content (README profiles are positional): the approval covers only the command the
+        // user was shown. If a rescan/refresh changed what this id means since then, refuse instead of running something else.
+        if (!CommandSpec.IsSameInvocation(known.Command, expectedCommand))
+        {
+            throw new CommandChangedException(itemId, profile.Id);
         }
 
         var check = pathGuard.Check(known.Command.WorkingDirectory, PathOperation.Execute);

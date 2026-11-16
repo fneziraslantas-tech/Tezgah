@@ -23,16 +23,25 @@ public sealed class DemoRunService(ICatalogService catalog) : IRunService
 
     public event EventHandler? RunningChanged;
 
-    public async Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CancellationToken ct)
+    public async Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CommandSpec expectedCommand, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        if (!catalog.GetMeta(itemId).Trusted)
+        ArgumentNullException.ThrowIfNull(expectedCommand);
+        if (!catalog.IsTrusted(itemId))
         {
             throw new UntrustedItemException(itemId);
         }
 
+        // Same rules as the real RunService: only the catalog's copy runs, and only if it is what the user was shown.
+        var known = catalog.GetProfiles(itemId).FirstOrDefault(p => p.Id == profile.Id)
+            ?? throw new InvalidOperationException(Tezgah.Core.L.T($"Bu çalıştırma profili öğeye ait değil: {profile.Label}", $"This run profile does not belong to the item: {profile.Label}"));
+        if (!CommandSpec.IsSameInvocation(known.Command, expectedCommand))
+        {
+            throw new CommandChangedException(itemId, profile.Id);
+        }
+
         await Task.Delay(120, ct).ConfigureAwait(false);
-        var proc = new DemoRunningProcess(itemId, profile);
+        var proc = new DemoRunningProcess(itemId, known);
         proc.Exited += (_, _) =>
         {
             lock (_gate)

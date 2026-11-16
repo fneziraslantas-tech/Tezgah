@@ -87,14 +87,14 @@ public sealed class EndToEndTests
         var profile = catalog.GetProfiles(repo.Id).Single(p => p.IsDefault);
 
         // Workspace trust: nothing runs before the user trusts the folder.
-        var untrusted = await Assert.ThrowsAsync<UntrustedItemException>(() => runs.StartAsync(repo.Id, profile, CancellationToken.None));
+        var untrusted = await Assert.ThrowsAsync<UntrustedItemException>(() => runs.StartAsync(repo.Id, profile, profile.Command, CancellationToken.None));
         Assert.Equal(repo.Id, untrusted.ItemId);
         Assert.Empty(runs.Running);
         Assert.Null(catalog.GetMeta(repo.Id).LastRunAt);
 
         await catalog.UpdateMetaAsync(repo.Id, m => m with { Trusted = true }, CancellationToken.None);
         var urlSeen = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var running = await runs.StartAsync(repo.Id, profile, CancellationToken.None);
+        var running = await runs.StartAsync(repo.Id, profile, profile.Command, CancellationToken.None);
         running.UrlDetected += (_, u) => urlSeen.TrySetResult(u);
         if (running.DetectedUrls.Count > 0)
         {

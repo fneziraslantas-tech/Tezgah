@@ -120,6 +120,8 @@
     <sys:String x:Key="Run_ExitedWithCode">Bitti · çıkış kodu {0}</sys:String>
     <sys:String x:Key="Run_Failed">"{0}" başlatılamadı: {1}</sys:String>
     <sys:String x:Key="Run_StopFailed">Durdurulamadı: {0}</sys:String>
+    <sys:String x:Key="Run_ProfileGone">"{0}" komutu klasör yeniden okunduktan sonra artık yok; hiçbir şey çalıştırılmadı.</sys:String>
+    <sys:String x:Key="Run_CommandChanged">"{0}" komutu siz onayladıktan sonra değişti; hiçbir şey çalıştırılmadı. Güncel komutu kontrol edip yeniden deneyin.</sys:String>
     <sys:String x:Key="Run_LinesSkipped">… {0} satır atlandı (çıktı çok hızlı)</sys:String>
     <sys:String x:Key="Run_InputFailed">Girdi gönderilemedi: {0}</sys:String>
     <sys:String x:Key="ProfileKind_Run">Çalıştır</sys:String>

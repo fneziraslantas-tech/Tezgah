@@ -20,6 +20,12 @@ public sealed record UserMeta
     /// <summary>URL the folder was cloned from by Tezgah itself (the only remote the trust prompt can call verified).</summary>
     public string? ClonedFrom { get; init; }
 
+    /// <summary>
+    /// Identity of the folder Tezgah cloned (same format as <see cref="TrustAnchor"/>, recorded with <see cref="ClonedFrom"/>).
+    /// <see cref="ClonedFrom"/> is dropped when the folder at the path no longer has it, trusted or not.
+    /// </summary>
+    public string? CloneAnchor { get; init; }
+
     public DateTimeOffset? LastRunAt { get; init; }
 
     /// <summary>Profile id the user picked as default; overrides detector default.</summary>

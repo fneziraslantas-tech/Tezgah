@@ -162,6 +162,9 @@ internal sealed class ProjectInspector
             return null;
         }
 
+        // Identity first: if the folder is swapped while it is being read, the recorded identity is the old one and no longer
+        // matches the live folder, so trust bound to this item fails closed instead of covering the new content.
+        var identity = FsUtil.FolderIdentity(full);
         var isGit = IsGitRoot(full);
         var detection = Detect(full, includeReadmeCommands: isGit || force, ct);
         if (!isGit && !detection.IsProject && !force)
@@ -214,6 +217,7 @@ internal sealed class ProjectInspector
             Path = full,
             Description = detection.Description,
             InstalledAt = created,
+            FolderIdentity = identity,
             LastActivity = lastActivity,
             SizeBytes = size,
             Git = git,

@@ -186,7 +186,7 @@ internal sealed class FakeRunService : IRunService
 
     public IReadOnlyList<IRunningProcess> Running => [];
 
-    public Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CancellationToken ct) => throw new NotSupportedException();
+    public Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CommandSpec expectedCommand, CancellationToken ct) => throw new NotSupportedException();
 
     public Task StopAsync(Guid runId, CancellationToken ct) => Task.CompletedTask;
 

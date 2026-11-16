@@ -120,6 +120,42 @@ internal static class FsUtil
     }
 
     /// <summary>True when the directory exists and is not a reparse point (junction/symlink).</summary>
+    /// <summary>Prefix of the folder identity format; anything else (e.g. the old creation-time-only anchors) never matches.</summary>
+    public const string FolderIdentityPrefix = "fid1:";
+
+    /// <summary>
+    /// Stable identity of the folder at <paramref name="path"/>: volume serial number + file id + creation time, read from one
+    /// handle (see <see cref="Interop.Win32.GetDirectoryIdentity"/>). A folder deleted and re-created at the same path gets a
+    /// new file id even when its creation time is restored (file-system tunneling, SetCreationTime). Null when unknown:
+    /// an unknown identity never matches anything (fail closed).
+    /// </summary>
+    public static string? FolderIdentity(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !Path.IsPathFullyQualified(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            // The raw CreateFile call gets no automatic long-path handling: use the \\?\ form for long paths.
+            var native = path.Length < 240 || path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
+                : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
+                : @"\\?\" + Path.GetFullPath(path);
+            if (Interop.Win32.GetDirectoryIdentity(native) is not { } id)
+            {
+                return null;
+            }
+
+            var ic = System.Globalization.CultureInfo.InvariantCulture;
+            return string.Create(ic, $"{FolderIdentityPrefix}{id.VolumeSerial:x16}:{id.FileId:x32}:{id.CreationFileTime:x16}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
     public static bool IsRealDirectory(string path)
     {
         try
