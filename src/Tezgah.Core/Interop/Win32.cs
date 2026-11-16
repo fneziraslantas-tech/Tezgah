@@ -89,6 +89,49 @@ internal static unsafe class Win32
         return (data.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0 ? data.Reserved0 : null;
     }
 
+    /// <summary>
+    /// Identity of the directory entry at <paramref name="path"/> itself: volume serial number, file id and creation time
+    /// (raw FILETIME), all read from one handle. The entry is opened without following a final link
+    /// (FILE_FLAG_OPEN_REPARSE_POINT), with FILE_READ_ATTRIBUTES only and full sharing, so it never blocks other programs.
+    /// Null when it cannot be opened, is not a directory, is a junction/symlink (retargetable without changing its own
+    /// identity) or the file system reports no file id.
+    /// </summary>
+    public static (ulong VolumeSerial, UInt128 FileId, long CreationFileTime)? GetDirectoryIdentity(string path)
+    {
+        using var handle = NativeMethods.CreateFile(path, NativeMethods.FileReadAttributes, NativeMethods.FileShareAll, 0,
+            NativeMethods.OpenExisting, NativeMethods.FileFlagBackupSemantics | NativeMethods.FileFlagOpenReparsePoint, 0);
+        if (handle.IsInvalid)
+        {
+            return null;
+        }
+
+        FileAttributeTagInfo tag;
+        if (!NativeMethods.GetFileInformationByHandleEx(handle, NativeMethods.FileAttributeTagInfoClass, &tag, (uint)sizeof(FileAttributeTagInfo))
+            || (tag.FileAttributes & (uint)FileAttributes.Directory) == 0
+            || ((tag.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0 && (tag.ReparseTag & NativeMethods.ReparseTagNameSurrogateBit) != 0))
+        {
+            return null;
+        }
+
+        if (!NativeMethods.GetFileInformationByHandle(handle, out var basic))
+        {
+            return null;
+        }
+
+        var created = (long)(((ulong)basic.CreationTimeHigh << 32) | basic.CreationTimeLow);
+
+        // 128-bit id (ReFS needs it, NTFS fills the low half); file systems without FileIdInfo fall back to the 64-bit index.
+        FileIdInfo id;
+        if (NativeMethods.GetFileInformationByHandleEx(handle, NativeMethods.FileIdInfoClass, &id, (uint)sizeof(FileIdInfo)))
+        {
+            var fileId = new UInt128(id.FileIdHigh, id.FileIdLow);
+            return fileId == UInt128.Zero ? null : (id.VolumeSerialNumber, fileId, created);
+        }
+
+        var index = ((ulong)basic.FileIndexHigh << 32) | basic.FileIndexLow;
+        return index == 0 ? null : (basic.VolumeSerialNumber, index, created);
+    }
+
     /// <summary>Full image path of a process, or null when access is denied / it already exited.</summary>
     public static string? TryGetProcessImagePath(int processId)
     {

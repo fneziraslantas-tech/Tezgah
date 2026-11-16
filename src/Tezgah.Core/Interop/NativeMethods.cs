@@ -120,6 +120,42 @@ internal struct JobObjectBasicAccountingInformation
     public uint TotalTerminatedProcesses;
 }
 
+/// <summary>FILE_ID_INFO (GetFileInformationByHandleEx, FileIdInfo): 64-bit volume serial + 128-bit file id.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FileIdInfo
+{
+    public ulong VolumeSerialNumber;
+    public ulong FileIdLow;
+    public ulong FileIdHigh;
+}
+
+/// <summary>FILE_ATTRIBUTE_TAG_INFO (GetFileInformationByHandleEx, FileAttributeTagInfo).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FileAttributeTagInfo
+{
+    public uint FileAttributes;
+    public uint ReparseTag;
+}
+
+/// <summary>BY_HANDLE_FILE_INFORMATION. FILETIMEs are split into two DWORDs to keep the native 4-byte packing.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct ByHandleFileInformation
+{
+    public uint FileAttributes;
+    public uint CreationTimeLow;
+    public uint CreationTimeHigh;
+    public uint LastAccessTimeLow;
+    public uint LastAccessTimeHigh;
+    public uint LastWriteTimeLow;
+    public uint LastWriteTimeHigh;
+    public uint VolumeSerialNumber;
+    public uint FileSizeHigh;
+    public uint FileSizeLow;
+    public uint NumberOfLinks;
+    public uint FileIndexHigh;
+    public uint FileIndexLow;
+}
+
 internal static unsafe partial class NativeMethods
 {
     public const int JobObjectBasicAccountingInformationClass = 1;
@@ -133,6 +169,10 @@ internal static unsafe partial class NativeMethods
     public const uint FileShareAll = 0x1 | 0x2 | 0x4;
     public const uint OpenExisting = 3;
     public const uint FileFlagBackupSemantics = 0x02000000;
+    public const uint FileFlagOpenReparsePoint = 0x00200000;
+    public const int FileAttributeTagInfoClass = 9;
+    public const int FileIdInfoClass = 18;
+    public const uint ReparseTagNameSurrogateBit = 0x20000000;
     public const uint VolumeNameDos = 0x0;
 
     public const uint FoDelete = 0x0003;
@@ -174,6 +214,14 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     public static partial SafeFileHandle CreateFile(string fileName, uint desiredAccess, uint shareMode, nint securityAttributes, uint creationDisposition, uint flagsAndAttributes, nint templateFile);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetFileInformationByHandleEx(SafeFileHandle file, int infoClass, void* info, uint size);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetFileInformationByHandle(SafeFileHandle file, out ByHandleFileInformation info);
 
     [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
     public static partial uint GetFinalPathNameByHandle(SafeFileHandle file, char* path, uint length, uint flags);

@@ -128,6 +128,88 @@ public sealed class CatalogTrustTests : IDisposable
     }
 
     [Fact]
+    public async Task Folder_recreated_with_its_old_creation_time_is_not_trusted()
+    {
+        using var svc = NewService();
+        var path = Project("tunnel");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        Assert.True(svc.IsTrusted(item.Id));
+        var created = Directory.GetCreationTimeUtc(path);
+
+        // Deleted and immediately re-created under the same name with different code. NTFS tunneling can hand the new
+        // folder the old creation time; restoring it explicitly makes the test independent of the tunnel cache.
+        Directory.Delete(path, true);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "go.mod"), "module evil");
+        Directory.SetCreationTimeUtc(path, created);
+        Assert.Equal(created, Directory.GetCreationTimeUtc(path));
+
+        Assert.False(svc.IsTrusted(item.Id)); // at the point of use, before any rescan
+        await svc.ScanAsync(null, CancellationToken.None);
+        Assert.False(svc.GetMeta(item.Id).Trusted);
+        Assert.Null(svc.GetMeta(item.Id).TrustAnchor);
+    }
+
+    [Fact]
+    public void Folder_identity_is_stable_for_the_same_folder_and_differs_for_a_recreated_one()
+    {
+        var path = _dir.Sub("ident");
+        var first = CatalogService.LiveTrustAnchor(path);
+        Assert.NotNull(first);
+        Assert.StartsWith("fid1:", first, StringComparison.Ordinal);
+        Assert.Equal(first, CatalogService.LiveTrustAnchor(path));
+        Assert.Equal(first, CatalogService.LiveTrustAnchor(path + Path.DirectorySeparatorChar));
+
+        var created = Directory.GetCreationTimeUtc(path);
+        Directory.Delete(path);
+        Directory.CreateDirectory(path);
+        Directory.SetCreationTimeUtc(path, created);
+        Assert.NotEqual(first, CatalogService.LiveTrustAnchor(path));
+
+        // Not a folder, or a junction (retargetable without changing its own identity): no identity at all.
+        Assert.Null(CatalogService.LiveTrustAnchor(_dir.File("plain.txt", "x")));
+        var link = Path.Combine(_dir.Path, "link");
+        if (TestTools.TryCreateJunction(link, path))
+        {
+            Assert.Null(CatalogService.LiveTrustAnchor(link));
+        }
+    }
+
+    [Fact]
+    public async Task Trust_recorded_with_a_creation_time_anchor_is_revoked_cleanly()
+    {
+        var path = Project("legacy");
+        var id = ItemIds.ForPath(path);
+        var storePath = Path.Combine(_dir.Path, "c.json");
+
+        // What an older Tezgah wrote: no folder identity on the item, the creation time (UTC ticks) as the anchor.
+        var ticks = Directory.GetCreationTimeUtc(path).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        using (var oldStore = new CatalogStore(storePath))
+        {
+            await oldStore.SaveAsync(new CatalogState
+            {
+                Items = [new CatalogItem { Id = id, Kind = ItemKind.ProjectFolder, Source = Sources.FileSystem, Name = "legacy", Path = path, InstalledAt = Directory.GetCreationTimeUtc(path) }],
+                Meta = new Dictionary<string, UserMeta> { [id] = new() { Trusted = true, TrustAnchor = ticks, Favorite = true } },
+            }, CancellationToken.None);
+        }
+
+        using var svc = NewService();
+        await svc.InitializeAsync(CancellationToken.None);
+        Assert.False(svc.IsTrusted(id)); // no crash, just not trusted
+
+        await svc.ScanAsync(null, CancellationToken.None);
+        Assert.False(svc.GetMeta(id).Trusted);
+        Assert.Null(svc.GetMeta(id).TrustAnchor);
+        Assert.True(svc.GetMeta(id).Favorite);
+
+        // Confirming again binds to the new identity format.
+        await svc.UpdateMetaAsync(id, m => m with { Trusted = true }, CancellationToken.None);
+        Assert.True(svc.IsTrusted(id));
+        Assert.StartsWith("fid1:", svc.GetMeta(id).TrustAnchor, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Fetch_is_refused_for_a_replaced_folder_before_any_rescan()
     {
         var git = new FetchRecordingGit();
@@ -225,6 +307,7 @@ public sealed class CatalogTrustTests : IDisposable
             Path = path,
             LastActivity = old,
             InstalledAt = Directory.GetCreationTimeUtc(path),
+            FolderIdentity = CatalogService.LiveTrustAnchor(path),
             Git = new GitInfo { StatusUnknown = true, UnpushedCommits = null },
         };
 

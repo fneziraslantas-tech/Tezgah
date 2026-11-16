@@ -57,6 +57,13 @@ public sealed record CatalogItem
 
     public DateTimeOffset? InstalledAt { get; init; }
 
+    /// <summary>
+    /// Filesystem items: identity of the folder that was inspected (volume serial number + file id + creation time), taken
+    /// before its contents were read. Workspace trust and the "cloned by Tezgah" mark are bound to it. Null when unknown
+    /// (other sources, or a file system without file ids): an unknown identity never matches.
+    /// </summary>
+    public string? FolderIdentity { get; init; }
+
     /// <summary>Last meaningful activity: last commit, last file write, or last run - whichever is newest.</summary>
     public DateTimeOffset? LastActivity { get; init; }
 

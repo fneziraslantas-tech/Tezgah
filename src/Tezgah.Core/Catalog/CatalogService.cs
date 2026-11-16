@@ -281,42 +281,20 @@ internal sealed class CatalogService : ICatalogService, IDisposable
     }
 
     /// <summary>
-    /// Identity of a filesystem item used to bind workspace trust to the folder that was actually trusted: its creation
-    /// time. A folder deleted and re-created (clone, unzip, copy) at the same path gets a new one.
+    /// Identity of a filesystem item used to bind workspace trust to the folder that was actually trusted: volume serial
+    /// number + file id + creation time of the folder as inspected (<see cref="CatalogItem.FolderIdentity"/>). A folder
+    /// deleted and re-created (clone, unzip, copy) at the same path gets a new file id, even when file-system tunneling or
+    /// SetCreationTime gives it the old creation time back.
     /// </summary>
-    /// <remarks>Null when the creation time is unknown: an unknown identity never matches anything (fail closed).</remarks>
+    /// <remarks>
+    /// Null when the identity is unknown: an unknown identity never matches anything (fail closed). Anchors recorded by
+    /// older versions (creation time only) have a different format, never match and are revoked: the user is asked again.
+    /// </remarks>
     internal static string? TrustAnchorOf(CatalogItem item) =>
-        item.InstalledAt is { } created && created.UtcTicks > MinAnchorTicks ? AnchorText(created.UtcTicks) : null;
+        item.FolderIdentity is { } id && id.StartsWith(FsUtil.FolderIdentityPrefix, StringComparison.Ordinal) ? id : null;
 
     /// <summary>The identity of whatever folder lives at <paramref name="path"/> right now, or null when it cannot be read.</summary>
-    internal static string? LiveTrustAnchor(string? path)
-    {
-        if (string.IsNullOrEmpty(path) || !Path.IsPathFullyQualified(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            // GetCreationTimeUtc returns 1601-01-01 instead of throwing for missing paths: check existence first.
-            if (!Directory.Exists(path))
-            {
-                return null;
-            }
-
-            var ticks = Directory.GetCreationTimeUtc(path).Ticks;
-            return ticks > MinAnchorTicks ? AnchorText(ticks) : null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>Anything at or before 1601-01-02 is the "no time" sentinel of the file APIs.</summary>
-    private static readonly long MinAnchorTicks = new DateTime(1601, 1, 2, 0, 0, 0, DateTimeKind.Utc).Ticks;
-
-    private static string AnchorText(long utcTicks) => utcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    internal static string? LiveTrustAnchor(string? path) => FsUtil.FolderIdentity(path);
 
     /// <summary>
     /// True when <paramref name="meta"/> records trust for <paramref name="item"/> and, for filesystem items, the folder at the
