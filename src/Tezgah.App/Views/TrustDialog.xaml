@@ -1,0 +1,47 @@
+<Window x:Class="Tezgah.App.Views.TrustDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource DialogWindow}" Width="560" Title="{DynamicResource Trust_Title}">
+    <StackPanel>
+        <StackPanel Margin="24,22,24,20">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE83D;" Style="{StaticResource Icon}" FontSize="22" Margin="0,0,12,12" VerticalAlignment="Top"
+                           Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+                <TextBlock Text="{DynamicResource Trust_Title}" Style="{StaticResource DialogTitle}" />
+            </StackPanel>
+            <TextBlock Text="{DynamicResource Trust_Message}" TextWrapping="Wrap" LineHeight="20" />
+
+            <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{DynamicResource Trust_Item}" Style="{StaticResource Caption}" Margin="0,0,16,6" />
+                    <TextBlock Grid.Column="1" x:Name="NameText" FontWeight="SemiBold" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="1" Text="{DynamicResource Detail_Path}" Style="{StaticResource Caption}" Margin="0,0,16,6" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" x:Name="PathText" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="2" Text="{DynamicResource Trust_Source}" Style="{StaticResource Caption}" Margin="0,0,16,6" />
+                    <TextBlock Grid.Row="2" Grid.Column="1" x:Name="RemoteText" Margin="0,0,0,6" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="3" Text="{DynamicResource Trust_Command}" Style="{StaticResource Caption}" Margin="0,2,16,0" />
+                    <Border Grid.Row="3" Grid.Column="1" CornerRadius="4" Padding="8,5" Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}">
+                        <TextBlock x:Name="CommandText" Style="{StaticResource Mono}" TextWrapping="Wrap" />
+                    </Border>
+                </Grid>
+            </Border>
+            <TextBlock Text="{DynamicResource Trust_Footnote}" Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,12,0,0" />
+        </StackPanel>
+        <Border Style="{StaticResource DialogFooter}">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Style="{StaticResource OutlineButton}" Content="{DynamicResource Trust_Cancel}" Margin="0,0,8,0" MinWidth="96" IsCancel="True" IsDefault="True" Click="Cancel_Click" />
+                <Button Style="{StaticResource PrimaryButton}" Content="{DynamicResource Trust_Confirm}" MinWidth="140" Click="Ok_Click" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</Window>
