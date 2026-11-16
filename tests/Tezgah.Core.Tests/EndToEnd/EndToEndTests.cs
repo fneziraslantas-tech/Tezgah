@@ -181,9 +181,15 @@ public sealed class EndToEndTests
         Assert.False(catalog.State.Meta.ContainsKey(repo.Id));
         Assert.Contains(catalog.State.Items, i => i.Id == ItemIds.ForPath(world.NodePath));
 
+        // A "started" record is written before anything is deleted, then the final outcome record.
         var lines = File.ReadAllLines(world.AuditLogPath);
-        var entry = Assert.Single(lines);
-        using var json = JsonDocument.Parse(entry);
+        Assert.Equal(2, lines.Length);
+        using (var started = JsonDocument.Parse(lines[0]))
+        {
+            Assert.Equal("started", started.RootElement.GetProperty("outcome").GetString());
+        }
+
+        using var json = JsonDocument.Parse(lines[1]);
         Assert.Equal("uninstall", json.RootElement.GetProperty("action").GetString());
         Assert.Equal(repo.Id, json.RootElement.GetProperty("itemId").GetString());
         Assert.Equal("success", json.RootElement.GetProperty("outcome").GetString());
