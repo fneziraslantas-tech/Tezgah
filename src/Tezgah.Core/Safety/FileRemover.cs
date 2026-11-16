@@ -1,3 +1,4 @@
+using Microsoft.Win32.SafeHandles;
 using Tezgah.Core.Abstractions;
 using Tezgah.Core.Interop;
 using Tezgah.Core.Model;
@@ -180,16 +181,31 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
         return changed;
     }
 
+    private const uint DirectoryAccess = NativeMethods.FileListDirectory | NativeMethods.Delete
+        | NativeMethods.FileReadAttributes | NativeMethods.FileWriteAttributes;
+
+    private const uint EntryAccess = NativeMethods.Delete | NativeMethods.FileReadAttributes | NativeMethods.FileWriteAttributes;
+
+    // Folders being emptied are held without FILE_SHARE_DELETE: nobody can rename them away (or swap a junction in
+    // their place) while Tezgah works inside them.
+    private const uint DirectoryShare = NativeMethods.FileShareRead | NativeMethods.FileShareWrite;
+
     /// <summary>
-    /// Recursive delete that removes links themselves instead of descending into them, and clears read-only attributes
-    /// (git object files are read-only).
+    /// Recursive delete that removes links themselves instead of descending into them, and deletes read-only files (git
+    /// object files are read-only). Works on handles: every folder is opened without following links, checked through
+    /// that handle, listed through it, and each entry is opened relative to it (again without following) and deleted
+    /// through its own handle. A rename or junction swap racing the delete therefore can never redirect it to another
+    /// tree; at worst the swapped-in link itself is removed.
     /// </summary>
-    internal static void DeleteTreePermanently(string directory, bool isRoot, CancellationToken ct)
+    internal static void DeleteTreePermanently(string directory, bool isRoot, CancellationToken ct) =>
+        DeleteTreePermanently(directory, isRoot, hooks: null, ct);
+
+    internal static void DeleteTreePermanently(string directory, bool isRoot, DeleteTreeHooks? hooks, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var info = new DirectoryInfo(directory);
-        info.Refresh(); // fresh attributes, never the ones cached by the parent's enumeration
-        if (IsLinkLike(info))
+        using var handle = Retry(() => FileHandles.Open(directory, DirectoryAccess, DirectoryShare, followReparse: false));
+        var tag = FileHandles.GetAttributeTag(handle, directory);
+        if (IsLinkLike(tag) || (tag.FileAttributes & (uint)FileAttributes.Directory) == 0)
         {
             if (isRoot)
             {
@@ -197,18 +213,31 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
                 throw new IOException(L.T($"Klasör silinmeden hemen önce bir bağlantıyla değiştirildi; dokunulmadı: {directory}", $"The folder was replaced by a link right before deletion; left untouched: {directory}"));
             }
 
-            RemoveLink(info);
+            Retry(() => FileHandles.DeleteByHandle(handle, directory));
             return;
         }
 
-        FileSystemInfo? history = null;
-        foreach (var entry in info.EnumerateFileSystemInfos("*", new EnumerationOptions
+        if (IsReparsePoint(tag))
         {
-            RecurseSubdirectories = false,
-            AttributesToSkip = 0,
-            IgnoreInaccessible = false,
-            ReturnSpecialDirectories = false,
-        }))
+            // Benign reparse folder (OneDrive placeholder): list it through the file system filter, but only if that
+            // reaches the very folder that was just checked.
+            using var listing = FileHandles.Open(directory, NativeMethods.FileListDirectory | NativeMethods.FileReadAttributes, NativeMethods.FileShareAll, followReparse: true);
+            EnsureSameObject(handle, listing, directory);
+            DeleteContents(listing, directory, isRoot, hooks, ct);
+        }
+        else
+        {
+            DeleteContents(handle, directory, isRoot, hooks, ct);
+        }
+
+        Retry(() => FileHandles.DeleteByHandle(handle, directory));
+    }
+
+    private static void DeleteContents(SafeFileHandle directory, string path, bool isRoot, DeleteTreeHooks? hooks, CancellationToken ct)
+    {
+        hooks?.BeforeList?.Invoke(path);
+        (string Name, FileAttributes Attributes)? history = null;
+        foreach (var entry in FileHandles.List(directory, path))
         {
             ct.ThrowIfCancellationRequested();
             if (isRoot && entry.Name.Equals(".git", StringComparison.OrdinalIgnoreCase))
@@ -217,41 +246,62 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
                 continue;
             }
 
-            DeleteEntry(entry, ct);
+            DeleteEntry(directory, path, entry.Name, entry.Attributes, hooks, ct);
         }
 
-        if (history is not null)
+        if (history is { } h)
         {
-            DeleteEntry(history, ct);
+            DeleteEntry(directory, path, h.Name, h.Attributes, hooks, ct);
         }
-
-
-        Retry(() =>
-        {
-            info.Attributes = FileAttributes.Directory;
-            info.Delete(recursive: false);
-        });
     }
 
-    private static void DeleteEntry(FileSystemInfo entry, CancellationToken ct)
+    private static void DeleteEntry(SafeFileHandle parent, string parentPath, string name, FileAttributes listed, DeleteTreeHooks? hooks, CancellationToken ct)
     {
-        if (IsLinkLike(entry))
+        ct.ThrowIfCancellationRequested();
+        var path = Path.Join(parentPath, name);
+        hooks?.BeforeOpen?.Invoke(path);
+        var isDirectory = (listed & FileAttributes.Directory) != 0;
+        using var entry = Retry(() => FileHandles.OpenChild(parent, name, isDirectory ? DirectoryAccess : EntryAccess,
+            isDirectory ? DirectoryShare : NativeMethods.FileShareAll, followReparse: false, isDirectory, path));
+        if (entry is null)
         {
-            RemoveLink(entry);
+            return; // already gone
         }
-        else if (entry is DirectoryInfo dir)
+
+        var tag = FileHandles.GetAttributeTag(entry, path);
+        if (isDirectory && !IsLinkLike(tag))
         {
-            DeleteTreePermanently(dir.FullName, isRoot: false, ct);
-        }
-        else
-        {
-            Retry(() =>
+            if (IsReparsePoint(tag))
             {
-                entry.Attributes = FileAttributes.Normal;
-                entry.Delete();
-            });
+                using var listing = FileHandles.OpenChild(parent, name, NativeMethods.FileListDirectory | NativeMethods.FileReadAttributes,
+                    NativeMethods.FileShareAll, followReparse: true, isDirectory: true, path)
+                    ?? throw new IOException(L.T($"Klasör silme sırasında değişti: {path}", $"The folder changed during deletion: {path}"));
+                EnsureSameObject(entry, listing, path);
+                DeleteContents(listing, path, isRoot: false, hooks, ct);
+            }
+            else
+            {
+                DeleteContents(entry, path, isRoot: false, hooks, ct);
+            }
+        }
+
+        // A link (junction, symlink) is deleted as itself: the handle was opened without following it.
+        Retry(() => FileHandles.DeleteByHandle(entry, path));
+    }
+
+    private static void EnsureSameObject(SafeFileHandle expected, SafeFileHandle actual, string path)
+    {
+        var a = FileHandles.GetId(expected, path);
+        var b = FileHandles.GetId(actual, path);
+        if (a.VolumeSerialNumber != b.VolumeSerialNumber || a.FileIdLow != b.FileIdLow || a.FileIdHigh != b.FileIdHigh)
+        {
+            throw new IOException(L.T($"Klasör silme sırasında değişti; dokunulmadı: {path}", $"The folder changed during deletion; left untouched: {path}"));
         }
     }
+
+    private static bool IsReparsePoint(FileAttributeTagInfo tag) => (tag.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0;
+
+    internal static bool IsLinkLike(FileAttributeTagInfo tag) => IsReparsePoint(tag) && IsLinkLikeTag(tag.ReparseTag);
 
     /// <summary>
     /// True for reparse points that redirect the namespace (symlinks, junctions, mount points, unknown tags). Benign tags
@@ -263,25 +313,11 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
 
     internal static bool IsLinkLikeTag(uint? tag) => tag is not { } t || !PathGuard.IsBenignReparseTag(t);
 
-    /// <summary>Deletes a symlink/junction entry. RemoveDirectoryW/DeleteFileW act on the link, never on its target.</summary>
-    private static void RemoveLink(FileSystemInfo link)
+    private static T Retry<T>(Func<T> action)
     {
-        Retry(() =>
-        {
-            if ((link.Attributes & FileAttributes.ReadOnly) != 0)
-            {
-                link.Attributes &= ~FileAttributes.ReadOnly;
-            }
-
-            if (link is DirectoryInfo d)
-            {
-                d.Delete(recursive: false);
-            }
-            else
-            {
-                link.Delete();
-            }
-        });
+        var result = default(T)!;
+        Retry(() => { result = action(); });
+        return result;
     }
 
     private static void Retry(Action action)
@@ -329,4 +365,14 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
         thread.Start();
         return tcs.Task;
     }
+}
+
+/// <summary>Test seams for <see cref="FileRemover.DeleteTreePermanently(string, bool, DeleteTreeHooks?, CancellationToken)"/>.</summary>
+internal sealed class DeleteTreeHooks
+{
+    /// <summary>Called with a folder's path after it was opened and checked, right before it is listed.</summary>
+    public Action<string>? BeforeList { get; init; }
+
+    /// <summary>Called with an entry's path after its folder was listed, right before the entry is opened.</summary>
+    public Action<string>? BeforeOpen { get; init; }
 }
