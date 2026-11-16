@@ -460,6 +460,11 @@ public sealed class UntrustedGitTests : IDisposable
     [InlineData(@"excludesFile = \\\\.\\UNC\\192.0.2.77\\share\\x")]
     [InlineData(@"excludesFile = %(prefix)//192.0.2.77/share/x")]
     [InlineData(@"excludesFile = C:\\x\\GLOBALROOT\\y")]
+    [InlineData("excludesFile = :(optional)//192.0.2.77/share/x")] // git 2.52+ strips ":(optional)" from pathname values
+    [InlineData("attributesFile = :(optional)//192.0.2.77/share/x")]
+    [InlineData("excludesFile = :(optional)%(prefix)//192.0.2.77/share/x")]
+    [InlineData("attributesFile = %(prefix):(optional)//192.0.2.77/share/x")]
+    [InlineData(@"excludesFile = :(optional):(optional)\\\\192.0.2.77\\share\\x")]
     public async Task Nt_namespace_config_value_is_refused_before_git_runs(string line)
     {
         // Reviewer PoC: core.excludesFile = \??\UNC\host\share passed LooksRemote, so `git status` during uninstall
@@ -483,8 +488,92 @@ public sealed class UntrustedGitTests : IDisposable
     [InlineData("~/.gitignore", false)]
     [InlineData("https://example.com/x.git", false)]
     [InlineData("refs/heads/main", false)]
+    [InlineData(":(optional)//host/share/x", true)]
+    [InlineData(@":(optional)\\host\share", true)]
+    [InlineData(":(optional)%(prefix)//host/share/x", true)]
+    [InlineData(" :(optional) %(prefix) :(optional)//host/share/x", true)]
+    [InlineData(":(optional)~/.gitignore", false)]
     public void LooksRemote_rejects_nt_and_device_namespaces(string value, bool remote) =>
         Assert.Equal(remote, GitRepoGuard.LooksRemote(value));
+
+    /// <summary>A hand-made repository (HEAD + config) whose config holds <paramref name="configLine"/> under [core].</summary>
+    private string RepoWithCoreLine(string configLine)
+    {
+        var repo = _dir.Sub("pv" + Guid.NewGuid().ToString("N")[..6]);
+        var gitDir = _dir.Sub(Path.GetFileName(repo), ".git");
+        File.WriteAllText(Path.Combine(gitDir, "HEAD"), "ref: refs/heads/main\n");
+        File.WriteAllText(Path.Combine(gitDir, "config"), "[core]\n\tbare = false\n\t" + configLine + "\n");
+        return repo;
+    }
+
+    [Theory]
+    [InlineData("attributesFile")]
+    [InlineData("excludesFile")]
+    [InlineData("hooksPath")]
+    public async Task Pathname_value_reached_through_a_worktree_junction_is_refused(string key)
+    {
+        // git resolves a relative pathname value against the worktree top: a "sub" link to a share would make
+        // `git status` open it although "sub/x" looks harmless. The junction here targets a local temp folder.
+        using var outside = new TempDir();
+        outside.File("x", "*.log\n");
+        var repo = RepoWithCoreLine($"{key} = sub/x");
+        if (!TestTools.TryCreateJunction(Path.Combine(repo, "sub"), outside.Path))
+        {
+            return; // junctions not supported here: skip
+        }
+
+        Assert.False(GitRepoGuard.TryResolveLocalGitDir(repo, out _, out var reason));
+        Assert.Contains("link", reason, StringComparison.Ordinal);
+        await AssertRefusedWithoutGitAsync(repo);
+
+        // Absolute local spelling of the same path: refused too.
+        var absolute = RepoWithCoreLine($"{key} = {Sh(Path.Combine(repo, "sub", "x"))}");
+        Assert.False(GitRepoGuard.TryResolveLocalGitDir(absolute, out _, out _));
+
+        // Same value without the link: accepted.
+        var plain = RepoWithCoreLine($"{key} = sub/x");
+        File.WriteAllText(Path.Combine(_dir.Sub(Path.GetFileName(plain), "sub"), "x"), "*.log\n");
+        Assert.True(GitRepoGuard.TryResolveLocalGitDir(plain, out _, out var plainReason), plainReason);
+    }
+
+    [Theory]
+    [InlineData("excludesFile = %(prefix)/etc/x")] // runtime prefix plus ".." could walk anywhere
+    [InlineData("attributesFile = ~otheruser/x")]
+    [InlineData("excludesFile = D:x")] // drive-relative
+    [InlineData("excludesFile = /x")] // root-relative
+    public void Pathname_value_that_cannot_be_resolved_locally_is_refused(string line) =>
+        Assert.False(GitRepoGuard.TryResolveLocalGitDir(RepoWithCoreLine(line), out _, out _));
+
+    [Theory]
+    [InlineData("excludesFile = .gitignore-extra")]
+    [InlineData("attributesFile = ~/.gitattributes")]
+    [InlineData("hooksPath = .husky/_")]
+    [InlineData("excludesFile =")]
+    public void Ordinary_pathname_values_are_accepted(string line) =>
+        Assert.True(GitRepoGuard.TryResolveLocalGitDir(RepoWithCoreLine(line), out _, out var reason), reason);
+
+    [Fact]
+    public async Task Repository_excludes_and_attributes_files_are_pinned_for_local_git_calls()
+    {
+        // Second layer behind the guard: git calls on scanned repositories never open the repository's own
+        // core.excludesFile / core.attributesFile. The repository's .gitignore still applies.
+        var repo = _dir.Sub("pinned");
+        if (!TestTools.GitInitWithCommit(repo))
+        {
+            return;
+        }
+
+        File.WriteAllText(Path.Combine(repo, "repo-excludes"), "*.log\n");
+        File.WriteAllText(Path.Combine(repo, ".gitignore"), "*.tmp\n");
+        File.WriteAllText(Path.Combine(repo, "a.log"), "x");
+        File.WriteAllText(Path.Combine(repo, "b.tmp"), "x");
+        Assert.Equal(0, TestTools.Run("git", repo, "config", "core.excludesFile", "repo-excludes"));
+        Assert.Contains("a.log", GitOut(repo, "ls-files", "--others", "--ignored", "--exclude-standard"), StringComparison.Ordinal); // plain git honours it
+
+        var ignored = await new GitClient(NullLogger<GitClient>.Instance).GetIgnoredPathsAsync(repo, CancellationToken.None);
+        Assert.Contains("b.tmp", ignored);
+        Assert.DoesNotContain("a.log", ignored);
+    }
 
     private static async Task AssertRefusedWithoutGitAsync(string repo)
     {

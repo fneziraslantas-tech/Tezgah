@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.IO.Enumeration;
 using Microsoft.Extensions.Logging;
 using Tezgah.Core.Abstractions;
+using Tezgah.Core.Interop;
 using Tezgah.Core.Model;
+using Tezgah.Core.Safety;
 
 namespace Tezgah.Core.Discovery;
 
@@ -174,6 +176,14 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
 
     private readonly record struct Entry(string Name, bool IsDirectory, FileAttributes Attributes);
 
+    /// <summary>
+    /// A file entry that is a link-like reparse point (symlink, possibly to a share). Cloud placeholders, dedup and WOF
+    /// files are ordinary files; the tag is only looked up for reparse entries with a marker name.
+    /// </summary>
+    private static bool IsLinkedFile(string dir, Entry e) =>
+        (e.Attributes & FileAttributes.ReparsePoint) != 0
+        && (Win32.GetReparseTag(Path.Combine(dir, e.Name)) is not { } tag || !PathGuard.IsBenignReparseTag(tag));
+
     private static readonly Lazy<IReadOnlySet<string>> ToolCachePaths = new(() => BuildToolCachePaths(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Environment.GetEnvironmentVariable));
 
@@ -312,7 +322,13 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
 
                     if (!e.IsDirectory)
                     {
-                        if (StrongMarkers.Contains(e.Name) || StrongExtensions.Any(x => e.Name.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
+                        var isStrong = StrongMarkers.Contains(e.Name) || StrongExtensions.Any(x => e.Name.EndsWith(x, StringComparison.OrdinalIgnoreCase));
+                        if ((isStrong || (!weak && ProjectInspector.HasProjectMarker(e.Name))) && IsLinkedFile(dir, e))
+                        {
+                            continue; // a file symlink is no project marker: the detectors would not read it anyway
+                        }
+
+                        if (isStrong)
                         {
                             strong = true;
                         }

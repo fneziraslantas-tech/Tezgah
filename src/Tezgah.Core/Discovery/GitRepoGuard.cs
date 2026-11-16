@@ -18,7 +18,8 @@ namespace Tezgah.Core.Discovery;
 /// <item><see cref="TryResolveLocalGitDir"/>: positive validation before a git process may run. On top of the location it
 /// fails closed on anything it cannot fully parse or that redirects git elsewhere: config it cannot parse (value
 /// continuation lines included), any include/includeIf, <c>core.worktree</c>, <c>extensions.worktreeConfig</c> /
-/// <c>config.worktree</c>, UNC-looking config values, alternates outside local drives or chained alternates,
+/// <c>config.worktree</c>, UNC-looking config values, pathname values (<c>core.excludesFile</c>, <c>core.attributesFile</c>...)
+/// that are not local or are reached through a link in the worktree, alternates outside local drives or chained alternates,
 /// http-alternates, linked-worktree back-pointers (<c>worktrees/*/gitdir</c>) that are not local, submodule gitdirs outside the
 /// repository, and link reparse points anywhere inside the git data.</item>
 /// </list>
@@ -29,6 +30,22 @@ internal static class GitRepoGuard
     private const long MaxConfigBytes = 256 * 1024;
     private const int MaxGitDirEntries = 100_000;
     private const int MaxWorktreeRegistrations = 100;
+
+    /// <summary>
+    /// Config keys whose value git opens as a file or directory path. Other pathname keys are only read by commands Tezgah
+    /// never runs on an untrusted repository (network operations, commit, clone templates).
+    /// </summary>
+    private static readonly HashSet<string> PathnameKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "core.excludesfile",
+        "core.attributesfile",
+        "core.hookspath",
+        "mailmap.file",
+        "blame.ignorerevsfile",
+        "commit.template",
+        "gpg.ssh.allowedsignersfile",
+        "gpg.ssh.revocationfile",
+    };
 
     /// <summary>
     /// Strict validation: true (and the per-worktree git directory) only when git may be run on <paramref name="worktree"/>.
@@ -43,12 +60,14 @@ internal static class GitRepoGuard
                 return false;
             }
 
-            if (!CheckGitDirStrict(located!, out reason))
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree));
+
+            if (!CheckGitDirStrict(located!, root, out reason))
             {
                 return false;
             }
 
-            if (!string.Equals(located, commonDir, StringComparison.OrdinalIgnoreCase) && !CheckGitDirStrict(commonDir!, out reason))
+            if (!string.Equals(located, commonDir, StringComparison.OrdinalIgnoreCase) && !CheckGitDirStrict(commonDir!, root, out reason))
             {
                 return false;
             }
@@ -58,7 +77,7 @@ internal static class GitRepoGuard
                 return false;
             }
 
-            if (!CheckSubmodules(Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree)), commonDir!, out reason))
+            if (!CheckSubmodules(root, commonDir!, out reason))
             {
                 return false;
             }
@@ -181,7 +200,7 @@ internal static class GitRepoGuard
         return true;
     }
 
-    private static bool CheckGitDirStrict(string gitDir, out string? reason)
+    private static bool CheckGitDirStrict(string gitDir, string worktree, out string? reason)
     {
         reason = null;
         var config = Path.Combine(gitDir, "config");
@@ -222,6 +241,12 @@ internal static class GitRepoGuard
                 if (e.Value is { } v && LooksRemote(v))
                 {
                     reason = $"config value points to a network location ({e.Key})";
+                    return false;
+                }
+
+                if (e.Value is { } path && PathnameKeys.Contains(e.Key) && !IsAcceptablePathnameValue(worktree, path, out var pathReason))
+                {
+                    reason = $"{pathReason} ({e.Key})";
                     return false;
                 }
             }
@@ -415,13 +440,8 @@ internal static class GitRepoGuard
     /// </summary>
     internal static bool LooksRemote(string value)
     {
-        var v = value.Trim();
-
-        // "%(prefix)/" is git's runtime-prefix placeholder; judge what follows it.
-        if (v.StartsWith("%(prefix)", StringComparison.OrdinalIgnoreCase))
-        {
-            v = v["%(prefix)".Length..];
-        }
+        // git strips ":(optional)" and expands "%(prefix)/" in pathname values; judge what follows them.
+        var v = StripPathnamePrefixes(value, out _);
 
         var n = v.Replace('/', '\\');
         if (n.StartsWith(@"\\", StringComparison.Ordinal) || n.StartsWith(@"\??\", StringComparison.Ordinal)
@@ -433,6 +453,87 @@ internal static class GitRepoGuard
 
         return v.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
             && !v.StartsWith("file:///", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Removes the markers git interprets at the start of a pathname value: <c>:(optional)</c> (git 2.52+: skip the file
+    /// when missing) and the runtime-prefix placeholder <c>%(prefix)</c>. git accepts them in that order only; any
+    /// sequence or repetition is stripped here so no combination hides what follows.
+    /// </summary>
+    internal static string StripPathnamePrefixes(string value, out bool runtimePrefix)
+    {
+        runtimePrefix = false;
+        var v = value.Trim();
+        while (true)
+        {
+            if (v.StartsWith(":(optional)", StringComparison.OrdinalIgnoreCase))
+            {
+                v = v[":(optional)".Length..].TrimStart();
+            }
+            else if (v.StartsWith("%(prefix)", StringComparison.OrdinalIgnoreCase))
+            {
+                v = v["%(prefix)".Length..].TrimStart();
+                runtimePrefix = true;
+            }
+            else
+            {
+                return v;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A pathname config value is acceptable only when the file git would open is provably local and reached without
+    /// links: git resolves a relative value against the worktree top, so a directory symlink or junction inside the
+    /// (untrusted) worktree could redirect it to a share although the string itself looks harmless.
+    /// </summary>
+    private static bool IsAcceptablePathnameValue(string worktree, string value, out string? reason)
+    {
+        reason = null;
+        var v = StripPathnamePrefixes(value, out var runtimePrefix);
+        if (v.Length == 0)
+        {
+            return true; // empty: git ignores the setting
+        }
+
+        if (runtimePrefix)
+        {
+            reason = "config value uses the runtime prefix";
+            return false; // "%(prefix)/../.." could walk anywhere; repository config has no use for it
+        }
+
+        string? full;
+        var checkLinksFrom = worktree;
+        if (v.StartsWith('~'))
+        {
+            if (v.Length > 1 && v[1] is not ('/' or '\\'))
+            {
+                reason = "config value names another user's home";
+                return false;
+            }
+
+            var home = GitClient.GitHome();
+            full = Resolve(home, v.Length > 2 ? v[2..] : ".");
+            checkLinksFrom = home; // the home folder itself may be a link (the user's choice); everything below is checked
+        }
+        else
+        {
+            full = Resolve(worktree, v);
+        }
+
+        if (full is null || !IsLocalPath(full))
+        {
+            reason = "config path is not on a local drive";
+            return false;
+        }
+
+        if (FindLinkBelow(checkLinksFrom, full) is { } link)
+        {
+            reason = $"link on the way to a config path: {link}";
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>First link-like reparse point among the path components of <paramref name="path"/> below <paramref name="ancestor"/>.</summary>
