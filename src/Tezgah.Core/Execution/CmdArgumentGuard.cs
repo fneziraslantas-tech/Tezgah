@@ -53,6 +53,10 @@ internal static partial class CmdArgumentGuard
     public static bool IsBatchFile(string path) =>
         path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>True when <see cref="BuildCmdArguments"/> accepts <paramref name="path"/> as the batch file to run.</summary>
+    public static bool IsSafeScriptPath(string path) =>
+        !string.IsNullOrEmpty(path) && Path.IsPathFullyQualified(path) && IsBatchFile(path) && ScriptPath().IsMatch(path);
+
     /// <summary>True when the argument can be passed through cmd.exe without being re-interpreted.</summary>
     public static bool IsSafeArgument(string argument)
     {

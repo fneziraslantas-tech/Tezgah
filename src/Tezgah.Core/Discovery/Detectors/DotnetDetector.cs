@@ -43,11 +43,21 @@ internal sealed class DotnetDetector : IProjectDetector
         }
 
         // Console/web apps before WinExe, shallower before deeper.
+        var usedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (project, _) in runnable.OrderBy(r => r.IsWinExe).ThenBy(r => r.Path.Count(c => c == '\\')).Take(6))
         {
             var rel = Path.GetRelativePath(directory, project);
             var name = Path.GetFileNameWithoutExtension(project);
-            profiles.Add(FsUtil.Profile($"dotnet:run:{name.ToLowerInvariant()}", $"dotnet run --project {rel}", RunProfileKind.Run, ProjectType,
+
+            // Keep the short id (saved DefaultProfileId values refer to it); same-named projects get a path-based id.
+            var id = $"dotnet:run:{name.ToLowerInvariant()}";
+            if (!usedIds.Add(id))
+            {
+                id = $"dotnet:run:{rel.Replace('\\', '/').ToLowerInvariant()}";
+                usedIds.Add(id);
+            }
+
+            profiles.Add(FsUtil.Profile(id, $"dotnet run --project {rel}", RunProfileKind.Run, ProjectType,
                 FsUtil.Spec("dotnet", directory, "run", "--project", rel), isDefault: profiles.Count == 0));
         }
 

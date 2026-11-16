@@ -131,21 +131,56 @@ internal static partial class ReadmeParser
         return text.Length <= maxLength ? text : text[..(maxLength - 1)].TrimEnd() + "…";
     }
 
-    /// <summary>Badge rows and language switchers ("[English](a) | [中文](b)"): nothing but links, images and separators.</summary>
-    private static bool IsLinkOnlyLine(string line)
+    /// <summary>Longest README line examined; longer lines are treated as noise (bounds regex work per line).</summary>
+    internal const int MaxLineLength = 2000;
+
+    /// <summary>
+    /// Badge rows and language switchers ("[English](a) | [中文](b)"): nothing but links, images and separators.
+    /// Linear: only negated-class regexes (Image, Link, HtmlTag) are used — the former nested lazy "link-only" pattern
+    /// backtracked exponentially on a row of links followed by text.
+    /// </summary>
+    internal static bool IsLinkOnlyLine(string line)
     {
-        if (LinkOnly().IsMatch(line))
+        if (line.Length > MaxLineLength)
         {
             return true;
         }
 
-        var links = Link().Count(line);
-        var withoutLinks = Link().Replace(Image().Replace(HtmlTag().Replace(line, string.Empty), string.Empty), string.Empty);
-        var letters = withoutLinks.Count(char.IsLetterOrDigit);
-        return (links >= 1 && letters == 0) || (links >= 2 && letters < 20);
+        try
+        {
+            var noTags = HtmlTag().Replace(line, string.Empty);
+            var images = Image().Count(noTags);
+            var noImages = Image().Replace(noTags, string.Empty); // "[![alt](img)](url)" collapses to "[](url)"
+            var links = Link().Count(noImages);
+            var rest = Link().Replace(noImages, string.Empty);
+            if (links + images >= 1 && rest.All(c => char.IsWhiteSpace(c) || c is '|' or '·' or '•' or '-' or '/' or ',' or '–' or '—'))
+            {
+                return true;
+            }
+
+            var letters = rest.Count(char.IsLetterOrDigit);
+            return (links >= 1 && letters == 0) || (links >= 2 && letters < 20);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return true;
+        }
     }
 
     public static string StripMarkdown(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        try
+        {
+            return StripMarkdownCore(text.Length > 8 * MaxLineLength ? text[..(8 * MaxLineLength)] : text);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string StripMarkdownCore(string text)
     {
         var t = Image().Replace(text, string.Empty);
         t = Link().Replace(t, "$1");
@@ -366,23 +401,20 @@ internal static partial class ReadmeParser
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._\-]*$", RegexOptions.CultureInvariant)]
     private static partial Regex ProgramName();
 
-    [GeneratedRegex(@"!\[[^\]]*\]\([^)]*\)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"!\[[^\]]*\]\([^)]*\)", RegexOptions.CultureInvariant, 250)]
     private static partial Regex Image();
 
-    [GeneratedRegex(@"\[([^\]]*)\]\([^)]*\)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\[([^\]]*)\]\([^)]*\)", RegexOptions.CultureInvariant, 250)]
     private static partial Regex Link();
 
-    [GeneratedRegex(@"<[^>]+>", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"<[^>]+>", RegexOptions.CultureInvariant, 250)]
     private static partial Regex HtmlTag();
 
-    [GeneratedRegex(@"(?<![\w*])[*_]([^*_]+)[*_](?![\w*])", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<![\w*])[*_]([^*_]+)[*_](?![\w*])", RegexOptions.CultureInvariant, 250)]
     private static partial Regex Emphasis();
 
-    [GeneratedRegex(@"\s{2,}", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\s{2,}", RegexOptions.CultureInvariant, 250)]
     private static partial Regex MultiSpace();
-
-    [GeneratedRegex(@"^(\s*(\[!\[.*?\]\(.*?\)\]\(.*?\)|!\[.*?\]\(.*?\)|\[.*?\]\(.*?\))\s*)+$", RegexOptions.CultureInvariant)]
-    private static partial Regex LinkOnly();
 
     [GeneratedRegex(@"^[\d.\s)]+", RegexOptions.CultureInvariant)]
     private static partial Regex LeadingNumbering();

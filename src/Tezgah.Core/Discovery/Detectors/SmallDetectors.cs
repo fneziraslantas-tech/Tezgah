@@ -120,7 +120,7 @@ internal sealed class JavaDetector : IProjectDetector
         {
             gp.Add(FsUtil.Profile("gradle:bootRun", "gradle bootRun", RunProfileKind.Run, ProjectType, FsUtil.Spec(gradle, directory, "bootRun"), isDefault: true));
         }
-        else if (build.Contains("application", StringComparison.Ordinal))
+        else if (GradleBuild.AppliesApplicationPlugin(build))
         {
             gp.Add(FsUtil.Profile("gradle:run", "gradle run", RunProfileKind.Run, ProjectType, FsUtil.Spec(gradle, directory, "run"), isDefault: true));
         }
@@ -190,4 +190,37 @@ internal sealed class StaticWebDetector : IProjectDetector
             FsUtil.Profile("static:open", L.T("Tarayıcıda aç", "Open in browser"), RunProfileKind.Run, ProjectType, FsUtil.Spec("explorer.exe", directory, index), isDefault: true),
         ], [], null);
     }
+}
+
+/// <summary>Detects the Gradle <c>application</c> plugin (which provides the <c>run</c> task).</summary>
+internal static partial class GradleBuild
+{
+    public static bool AppliesApplicationPlugin(string build)
+    {
+        ArgumentNullException.ThrowIfNull(build);
+        try
+        {
+            var code = Comments().Replace(build, string.Empty);
+            if (code.Contains("com.android.", StringComparison.Ordinal) || AndroidBlock().IsMatch(code))
+            {
+                return false; // Android: "com.android.application"/"applicationId" are not the application plugin
+            }
+
+            return ApplicationPlugin().IsMatch(code);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    [GeneratedRegex(@"//[^\n]*|/\*.*?\*/", RegexOptions.Singleline | RegexOptions.CultureInvariant, 250)]
+    private static partial Regex Comments();
+
+    [GeneratedRegex(@"(?m)^\s*android\s*\{", RegexOptions.CultureInvariant, 250)]
+    private static partial Regex AndroidBlock();
+
+    // id 'application' / id("application") / apply plugin: 'application' / bare `application` in plugins { } / application { } block
+    [GeneratedRegex(@"\bid\s*\(?\s*[""']application[""']|apply\s+plugin\s*:\s*[""']application[""']|plugins\s*\{[^}]*?(?<![\w.\-""'])application(?![\w.\-""'])|(?m)^\s*application\s*\{", RegexOptions.CultureInvariant, 250)]
+    private static partial Regex ApplicationPlugin();
 }

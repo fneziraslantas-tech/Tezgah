@@ -231,8 +231,8 @@ public sealed class DetectorTests : IDisposable
         _dir.File("install.bat", "@echo off");
         var d = new ScriptDetector().Detect(_dir.Path)!;
         var def = Assert.Single(d.Profiles, p => p.IsDefault);
-        Assert.Equal("cmd.exe", def.Command.FileName);
-        Assert.Equal(["/d", "/c", bat], def.Command.Arguments);
+        Assert.Equal(bat, def.Command.FileName); // run through CmdArgumentGuard at launch, never "cmd.exe /c path"
+        Assert.Empty(def.Command.Arguments);
         var ps = Assert.Single(d.Profiles, p => p.Id == "script:start.ps1");
         Assert.Contains(ps.Command.FileName, new[] { "pwsh", "powershell.exe" });
         Assert.Equal(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1], ps.Command.Arguments);

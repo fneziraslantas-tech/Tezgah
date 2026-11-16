@@ -5,7 +5,8 @@ namespace Tezgah.Core.Discovery.Detectors;
 
 /// <summary>
 /// Launcher scripts at the project root (run.bat, start.bat, webui.bat, run.ps1, start.ps1...).
-/// Batch files run through <c>cmd.exe /d /c &lt;full path&gt;</c> only when the path contains no cmd metacharacters;
+/// Batch files are the profile's program itself; the launcher runs them through <see cref="Execution.CmdArgumentGuard"/>
+/// (<c>System32\cmd.exe /d /v:off /s /c ""path""</c>, path always quoted) and only paths the guard accepts become profiles;
 /// PowerShell scripts run through <c>pwsh -NoProfile -ExecutionPolicy Bypass -File &lt;path&gt;</c> (Windows PowerShell as fallback).
 /// </summary>
 internal sealed class ScriptDetector : IProjectDetector
@@ -61,11 +62,13 @@ internal sealed class ScriptDetector : IProjectDetector
                 FsUtil.Spec(_powerShell.Value, directory, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", full), isDefault);
         }
 
-        if (!Cli.IsSafeForCmd(full))
+        if (!Execution.CmdArgumentGuard.IsSafeScriptPath(full))
         {
-            return null; // path cannot be passed to cmd.exe safely
+            return null; // path cannot be passed to cmd.exe safely (it would fail at launch)
         }
 
-        return FsUtil.Profile(id, name, kind, ProjectType, FsUtil.Spec("cmd.exe", directory, "/d", "/c", full), isDefault);
+        // Never "cmd.exe /c <path>" with ArgumentList: unquoted ( , ; = in the path are cmd token delimiters and would run
+        // a different program (e.g. "...\Proj" from "...\Proj(old)\run.bat").
+        return FsUtil.Profile(id, name, kind, ProjectType, FsUtil.Spec(full, directory), isDefault);
     }
 }

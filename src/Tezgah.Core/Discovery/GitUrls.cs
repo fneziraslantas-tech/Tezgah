@@ -5,7 +5,13 @@ namespace Tezgah.Core.Discovery;
 /// <summary>Helpers for git remote URLs.</summary>
 internal static partial class GitUrls
 {
-    /// <summary>Removes credentials (<c>https://user:token@host/...</c>) so they never reach the catalog file or the UI.</summary>
+    /// <summary>
+    /// Removes credentials so they never reach the catalog file or the UI, for every <c>scheme://</c> URL and without
+    /// relying on <see cref="Uri"/> (which rejects e.g. an unescaped '@' that git and curl accept):
+    /// everything up to the LAST '@' of the authority is dropped (ssh-like schemes keep a plain user name such as
+    /// <c>git@</c>, never a password), and query/fragment (<c>?private_token=...</c>) are removed.
+    /// scp-like remotes (<c>git@host:path</c>) cannot carry a password and are returned unchanged.
+    /// </summary>
     public static string? Sanitize(string? remote)
     {
         if (string.IsNullOrWhiteSpace(remote))
@@ -14,14 +20,32 @@ internal static partial class GitUrls
         }
 
         var r = remote.Trim();
-        if ((r.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || r.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) &&
-            Uri.TryCreate(r, UriKind.Absolute, out var uri) && uri.UserInfo.Length > 0)
+        var m = SchemeUrl().Match(r);
+        if (!m.Success)
         {
-            var b = new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty };
-            return b.Uri.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped);
+            return r;
         }
 
-        return r;
+        var scheme = m.Groups["s"].Value;
+        var authority = m.Groups["auth"].Value;
+        var rest = m.Groups["rest"].Value;
+        var at = authority.LastIndexOf('@');
+        if (at >= 0)
+        {
+            var userInfo = authority[..at];
+            var host = authority[(at + 1)..];
+            var isWeb = scheme.StartsWith("http", StringComparison.OrdinalIgnoreCase) || scheme.StartsWith("ftp", StringComparison.OrdinalIgnoreCase);
+            var user = userInfo.Split(':')[0];
+            authority = !isWeb && user.Length > 0 && !user.Contains('@', StringComparison.Ordinal) ? $"{user}@{host}" : host;
+        }
+
+        var cut = rest.IndexOfAny(['?', '#']);
+        if (cut >= 0)
+        {
+            rest = rest[..cut];
+        }
+
+        return scheme + authority + rest;
     }
 
     /// <summary>
@@ -69,6 +93,9 @@ internal static partial class GitUrls
 
         return $"https://{host.ToLowerInvariant()}/{path}";
     }
+
+    [GeneratedRegex(@"^(?<s>[A-Za-z][A-Za-z0-9+.\-]*://)(?<auth>[^/?#]*)(?<rest>.*)$", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex SchemeUrl();
 
     /// <summary>scp-like syntax: <c>[user@]host:path</c> (no scheme, host without slashes, path not starting with a drive letter backslash).</summary>
     [GeneratedRegex(@"^(?:[A-Za-z0-9._\-]+@)?(?<host>[A-Za-z0-9.\-]+\.[A-Za-z]{2,}|[A-Za-z0-9\-]{2,}):(?!//)(?<path>[^\\\s]+)$", RegexOptions.CultureInvariant)]
