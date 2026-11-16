@@ -236,7 +236,7 @@ public sealed class DemoCatalogService : ICatalogService
 
         var meta = GetMeta(item.Id);
         var last = meta.LastRunAt is { } run && run > item.LastActivity ? run : item.LastActivity.Value;
-        return DateTimeOffset.Now - last > TimeSpan.FromDays(State.Settings.ForgottenAfterDays);
+        return (DateTimeOffset.Now - last).TotalDays > Math.Clamp(State.Settings.ForgottenAfterDays, 1, 3650);
     }
 
     /// <summary>Demo-only hook used by the fake cleanup service.</summary>

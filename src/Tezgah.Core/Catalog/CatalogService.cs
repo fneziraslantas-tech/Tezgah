@@ -502,7 +502,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
     {
         ArgumentNullException.ThrowIfNull(item);
         var state = State;
-        var meta = state.Meta.TryGetValue(item.Id, out var m) ? m : null;
+        var meta = state.Meta.GetValueOrDefault(item.Id);
         if (meta?.Favorite == true)
         {
             return false;
@@ -514,7 +514,8 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             return false;
         }
 
-        return DateTimeOffset.Now - last.Value > TimeSpan.FromDays(Math.Max(1, state.Settings.ForgottenAfterDays));
+        // No TimeSpan.FromDays: a huge value from a hand-edited file would throw for every item.
+        return (DateTimeOffset.Now - last.Value).TotalDays > Math.Clamp(state.Settings.ForgottenAfterDays, CatalogStore.MinForgottenDays, CatalogStore.MaxForgottenDays);
     }
 
     private void UpdateState(Func<CatalogState, CatalogState> update)
