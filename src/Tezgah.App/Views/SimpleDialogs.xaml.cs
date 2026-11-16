@@ -32,7 +32,7 @@ public partial class CloneDialog : Window
     protected override void OnClosing(CancelEventArgs e)
     {
         ArgumentNullException.ThrowIfNull(e);
-        if (_vm.IsBusy)
+        if (_vm.IsBusy && _vm.Result is null)
         {
             // first close request cancels the clone; window stays until git has stopped
             _vm.CancelCommand.Execute(null);

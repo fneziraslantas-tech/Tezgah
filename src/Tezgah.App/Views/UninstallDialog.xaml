@@ -112,8 +112,9 @@
 
             <!-- typed confirmation -->
             <StackPanel Margin="0,12,0,0" Visibility="{Binding RequiresTypedConfirmation, Converter={StaticResource BoolToVis}}">
-                <TextBlock Text="{Binding TypePrompt}" TextWrapping="Wrap" Margin="0,0,0,6" FontWeight="SemiBold" />
+                <TextBlock x:Name="TypePromptText" Text="{Binding TypePrompt}" TextWrapping="Wrap" Margin="0,0,0,6" FontWeight="SemiBold" />
                 <TextBox x:Name="ConfirmBox" Text="{Binding TypedText, UpdateSourceTrigger=PropertyChanged}"
+                         AutomationProperties.LabeledBy="{Binding ElementName=TypePromptText}"
                          IsEnabled="{Binding IsDone, Converter={StaticResource InvBool}}" />
             </StackPanel>
 

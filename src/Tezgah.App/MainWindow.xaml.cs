@@ -139,7 +139,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_vm.RunningCount == 0)
+        if (!_vm.HasLiveRuns)
         {
             _closeConfirmed = true;
             return;

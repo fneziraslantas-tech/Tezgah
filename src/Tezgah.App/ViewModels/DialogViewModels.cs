@@ -338,13 +338,15 @@ public sealed partial class CloneViewModel : ObservableObject, IDisposable
         Error = null;
         Log.Clear();
         _cts = new CancellationTokenSource();
+        var succeeded = false;
         try
         {
             var progress = new Progress<string>(line => Log.Add(line));
-            Result = await _catalog.CloneAsync(Url.Trim(), TargetParent, progress, _cts.Token);
-            if (Result is not null)
+            var cloned = await _catalog.CloneAsync(Url.Trim(), TargetParent, progress, _cts.Token);
+            if (cloned is not null)
             {
-                CloseRequested?.Invoke(this, EventArgs.Empty);
+                Result = cloned; // only a success sets it: a later failed attempt never clears an earlier result
+                succeeded = true;
             }
             else
             {
@@ -364,6 +366,12 @@ public sealed partial class CloneViewModel : ObservableObject, IDisposable
             IsBusy = false;
             _cts.Dispose();
             _cts = null;
+        }
+
+        // Raised only after IsBusy is false: the dialog refuses to close (and cancels) while a clone is running.
+        if (succeeded)
+        {
+            CloseRequested?.Invoke(this, EventArgs.Empty);
         }
     }
 

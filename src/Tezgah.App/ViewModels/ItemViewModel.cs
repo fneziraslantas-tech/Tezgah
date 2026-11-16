@@ -209,6 +209,7 @@ public sealed partial class ItemViewModel : ObservableObject
     public void Update(CatalogItem item, UserMeta meta, IReadOnlyList<RunProfile> profiles, bool forgotten, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(item);
+        _searchHay = null;
         Item = item;
         Meta = meta;
         IsForgotten = forgotten;
@@ -232,14 +233,17 @@ public sealed partial class ItemViewModel : ObservableObject
             return true;
         }
 
-        var hay = string.Join('\n', new[]
+        // Folded once per item (reset in Update), not rebuilt for every item on every keystroke.
+        var hay = _searchHay ??= Formatting.SearchFold(string.Join('\n', new[]
         {
             Item.Name, Item.Path, Item.Description, Item.Git?.RemoteUrl, Item.Publisher, Meta.Note, Item.Source,
             string.Join(' ', Meta.Tags), string.Join(' ', Item.ProjectTypes),
-        }.Where(x => x is not null));
+        }.Where(x => x is not null)));
         return search.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .All(term => Formatting.Culture.CompareInfo.IndexOf(hay, term, CompareOptions.IgnoreCase) >= 0);
+            .All(term => hay.Contains(Formatting.SearchFold(term), StringComparison.Ordinal));
     }
+
+    private string? _searchHay;
 
     private List<ProfileViewModel> BuildProfiles(IReadOnlyList<RunProfile> profiles) =>
         [.. (profiles ?? []).Select(p => new ProfileViewModel(p, _s))];

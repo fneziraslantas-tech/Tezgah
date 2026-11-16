@@ -259,7 +259,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             }
         }
 
-        foreach (var id in _items.Keys.Where(k => !seen.Contains(k)).ToList())
+        // An item that left the catalog (renamed folder, rescan, provider turned off) keeps its view-model while any of its
+        // runs is alive: otherwise the process would keep running with no console and no Stop button anywhere.
+        foreach (var id in _items.Keys.Where(k => !seen.Contains(k) && !HasLiveRun(k)).ToList())
         {
             var gone = _items[id];
             _items.Remove(id);
@@ -315,6 +317,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         return session;
     }
 
+    private bool HasLiveRun(string itemId) =>
+        _runs.ForItem(itemId).Any(p => !p.HasExited) || (_items.TryGetValue(itemId, out var vm) && vm.Runs.Any(r => r.IsRunning && !r.Process.HasExited));
+
+    /// <summary>True while any process started from Tezgah is alive (the same source the close prompt uses).</summary>
+    public bool HasLiveRuns => _runs.Running.Any(p => !p.HasExited);
+
     private void UpdateRunningFlags()
     {
         var running = _runs.Running.Where(p => !p.HasExited).Select(p => p.ItemId).ToHashSet(StringComparer.Ordinal);
@@ -342,6 +350,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (anyExited)
         {
             UpdateRunningFlags();
+            if (_items.Keys.Any(k => !_catalog.State.Items.Any(i => i.Id == k)))
+            {
+                SyncFromCatalog(); // drop items kept only for their (now finished) runs
+            }
+
             UpdateStatus();
         }
     }
@@ -354,18 +367,45 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSortModeChanged(SortMode value) => ApplyFilter();
 
-    partial void OnSelectedItemChanged(ItemViewModel? value) => IsEditingMeta = false;
+    partial void OnSelectedItemChanged(ItemViewModel? oldValue, ItemViewModel? newValue)
+    {
+        // Only a real selection change ends a tag/note edit; a null pushed back by the list never discards it.
+        if (newValue is not null && !ReferenceEquals(oldValue, newValue))
+        {
+            IsEditingMeta = false;
+        }
+
+        if (oldValue is not null && newValue is not null && !_applyingFilter)
+        {
+            ApplyFilter(); // the previously pinned item may no longer match
+        }
+    }
+
+    private bool _applyingFilter;
 
     internal void ApplyFilter()
     {
-        IEnumerable<ItemViewModel> q = _items.Values.Where(i => !i.Meta.Hidden && PassesFilter(i) && i.Matches(SearchText));
+        // The selected item stays visible even when it stops matching the search/filter: removing it from the list would
+        // make WPF clear the selection, hiding its console and dropping an unsaved tag/note edit.
+        var selected = SelectedItem;
+        IEnumerable<ItemViewModel> q = _items.Values.Where(i =>
+            (ReferenceEquals(i, selected) && !i.Meta.Hidden) || (!i.Meta.Hidden && PassesFilter(i) && i.Matches(SearchText)));
         q = SortMode switch
         {
             SortMode.Name => q.OrderBy(i => i.Name, StringComparer.Create(Formatting.Culture, ignoreCase: true)),
             SortMode.Size => q.OrderByDescending(i => i.Item.SizeBytes ?? -1).ThenBy(i => i.Name, StringComparer.Create(Formatting.Culture, ignoreCase: true)),
             _ => q.OrderByDescending(i => i.IsRunning).ThenByDescending(i => i.EffectiveActivity ?? DateTimeOffset.MinValue),
         };
-        Reconcile(VisibleItems, q.ToList());
+        _applyingFilter = true;
+        try
+        {
+            Reconcile(VisibleItems, q.ToList());
+        }
+        finally
+        {
+            _applyingFilter = false;
+        }
+
         OnPropertyChanged(nameof(HasNoMatches));
     }
 

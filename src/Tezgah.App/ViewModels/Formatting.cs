@@ -128,4 +128,33 @@ public static class Formatting
             ? new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty }.Uri
             : null;
     }
+
+    /// <summary>
+    /// Case-, dotted/dotless-I- and diacritic-insensitive form used by search, independent of the UI culture: in tr-TR a
+    /// culture-aware IgnoreCase compare treats 'I' and 'i' as different letters, so "intellij" never found "IntelliJ".
+    /// </summary>
+    public static string SearchFold(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (var ch in text.Normalize(System.Text.NormalizationForm.FormD))
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            sb.Append(ch switch
+            {
+                'I' or 'ı' or 'İ' => 'i',
+                _ => char.ToLowerInvariant(ch),
+            });
+        }
+
+        return sb.ToString();
+    }
 }

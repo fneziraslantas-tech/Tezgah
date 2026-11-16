@@ -58,6 +58,17 @@ public class DialogRenderTests
         Render(new SettingsDialog(new SettingsViewModel(h.Catalog.State.Settings, new FakeDialogs(), strings)), outDir, "settings");
         using var clone = new CloneViewModel(h.Catalog, new FakeDialogs(), strings, @"C:\Users\me\source\repos") { Url = "https://github.com/user/new-tool" };
         Render(new CloneDialog(clone), outDir, "clone");
+
+        // Accessibility: glyph-only icon buttons are named by their tooltip; the typed-confirmation box has a label.
+        var icon = new System.Windows.Controls.Button { Style = (Style)app.FindResource("IconButton"), Content = "\uE713", ToolTip = "Ayarlar" };
+        var host = new Window { Content = icon, Width = 200, Height = 200, Left = -20000, Top = -20000, ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual };
+        host.Show();
+        Pump(TimeSpan.FromMilliseconds(300));
+        Assert.Equal("Ayarlar", new System.Windows.Automation.Peers.ButtonAutomationPeer(icon).GetName());
+        host.Close();
+        var uninstall = new UninstallDialog(new UninstallViewModel(whisper.Id, whisper.Name, h.Uninstall, strings));
+        Render(uninstall, null, "uninstall-a11y");
+        Assert.NotNull(System.Windows.Automation.AutomationProperties.GetLabeledBy(uninstall.ConfirmBox));
     }
 
     private static void Render(Window w, string? outDir, string name)
