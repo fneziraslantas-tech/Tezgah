@@ -27,6 +27,12 @@ internal sealed class CatalogService : ICatalogService, IDisposable
     private readonly SemaphoreSlim _scanGate = new(1, 1);
     private readonly SemaphoreSlim _saveGate = new(1, 1);
     private CatalogState _state = new();
+
+    // Per-item mutation stamps (guarded by _lock): a scan's results are older than any add/refresh/remove that happened
+    // while it ran, so those win when the scan merges.
+    private readonly Dictionary<string, long> _touched = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _removed = new(StringComparer.Ordinal);
+    private long _mutationSeq;
     private int _scanning;
     private bool _initialized;
 
@@ -91,6 +97,12 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         await _scanGate.WaitAsync(ct).ConfigureAwait(false);
         Interlocked.Exchange(ref _scanning, 1);
         OnChanged();
+        long startSeq;
+        lock (_lock)
+        {
+            startSeq = _mutationSeq;
+        }
+
         try
         {
             var settings = State.Settings;
@@ -146,7 +158,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
 
             UpdateState(s =>
             {
-                var merged = Merge(s, results, failed.ToHashSet(StringComparer.Ordinal), keptFs);
+                var merged = ApplyConcurrentMutations(Merge(s, results, failed.ToHashSet(StringComparer.Ordinal), keptFs), s, startSeq);
                 var fsRanOk = fsFound is not null && !failed.Contains(Sources.FileSystem);
                 return s with { Items = merged, Meta = ReconcileTrust(merged, s.Meta, pruneMissingPaths: fsRanOk), LastScanAt = DateTimeOffset.Now };
             });
@@ -196,6 +208,36 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         }
 
         return byId.Values.Select(i => WithMetaActivity(i, previous.Meta)).OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Re-applies what users changed while the scan ran (must be called under <see cref="_lock"/>): items added, cloned or
+    /// refreshed meanwhile keep their current version, items removed or uninstalled meanwhile stay removed.
+    /// </summary>
+    private List<CatalogItem> ApplyConcurrentMutations(List<CatalogItem> merged, CatalogState current, long startSeq)
+    {
+        var removed = _removed.Where(kv => kv.Value > startSeq).Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+        var touched = _touched.Where(kv => kv.Value > startSeq).Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+        _removed.Clear();
+        _touched.Clear();
+        if (removed.Count == 0 && touched.Count == 0)
+        {
+            return merged;
+        }
+
+        var byId = merged.Where(i => !removed.Contains(i.Id)).ToDictionary(i => i.Id, StringComparer.Ordinal);
+        foreach (var item in current.Items.Where(i => touched.Contains(i.Id)))
+        {
+            byId[item.Id] = item;
+        }
+
+        return byId.Values.OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    private void Touch(string id)
+    {
+        _touched[id] = ++_mutationSeq;
+        _removed.Remove(id);
     }
 
     /// <summary>
@@ -303,6 +345,12 @@ internal sealed class CatalogService : ICatalogService, IDisposable
 
         UpdateState(s =>
         {
+            if (!s.Items.Any(i => i.Id == itemId))
+            {
+                return s; // removed (e.g. uninstalled) while we were inspecting: never resurrect it
+            }
+
+            Touch(itemId);
             var items = s.Items.Where(i => i.Id != itemId).ToList();
             if (fresh is not null)
             {
@@ -361,6 +409,8 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         await EnsureInitializedAsync(ct).ConfigureAwait(false);
         UpdateState(s =>
         {
+            _removed[itemId] = ++_mutationSeq;
+            _touched.Remove(itemId);
             var meta = new Dictionary<string, UserMeta>(s.Meta, StringComparer.Ordinal);
             meta.Remove(itemId);
             return s with { Items = s.Items.Where(i => i.Id != itemId).ToList(), Meta = meta };
@@ -395,6 +445,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
 
         UpdateState(s =>
         {
+            Touch(item.Id);
             var wasLive = s.Items.Any(i => i.Id == item.Id);
             var items = s.Items.Where(i => i.Id != item.Id).ToList();
             items.Add(WithMetaActivity(item, s.Meta));
