@@ -10,6 +10,11 @@
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
     <NuGetAuditLevel>low</NuGetAuditLevel>
+    <!-- Reproducible restores: packages.lock.json is committed; CI and release restore with locked mode. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+    <!-- The release publishes win-x64: its restore graph must be in the lock files too. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <Version>0.1.0</Version>
     <Authors>Tezgah contributors</Authors>
     <Product>Tezgah</Product>
