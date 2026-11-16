@@ -30,6 +30,11 @@ jobs:
         run: dotnet build Tezgah.sln -c Release --no-restore
       - name: Test
         run: dotnet test Tezgah.sln -c Release --no-build --logger "trx;LogFileName=results.trx" --collect:"XPlat Code Coverage"
+      - name: Publish smoke test (same command as release.yml)
+        shell: pwsh
+        run: |
+          dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false -o "$env:RUNNER_TEMP/publish-smoke"
+          if (-not (Test-Path "$env:RUNNER_TEMP/publish-smoke/Tezgah.exe")) { throw 'Tezgah.exe was not produced' }
       - name: Vulnerable / deprecated packages
         shell: pwsh
         run: |
