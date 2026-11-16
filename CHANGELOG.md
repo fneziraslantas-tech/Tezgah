@@ -8,6 +8,8 @@ All notable changes to Tezgah are documented in this file. The format is based o
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-17
+
 ### Fixed
 
 - The About dialog shows the version of the release tag. The release workflow now takes the version only from the
@@ -80,5 +82,6 @@ file and a GitHub build provenance attestation. The executable is not code-signe
 - Test tooling updated: coverlet.collector 10.1.1, Microsoft.NET.Test.Sdk 18.12.0, xunit.runner.visualstudio 4.0.1
   ([#1](https://github.com/fneziraslantas-tech/Tezgah/pull/1)).
 
-[Unreleased]: https://github.com/fneziraslantas-tech/Tezgah/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/fneziraslantas-tech/Tezgah/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/fneziraslantas-tech/Tezgah/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fneziraslantas-tech/Tezgah/releases/tag/v0.1.1
