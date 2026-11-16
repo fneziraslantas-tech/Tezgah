@@ -45,6 +45,8 @@ internal sealed partial class PythonDetector : IProjectDetector
             profiles.Add(EntryProfile(directory, python, entry, isDefault: profiles.Count == 0));
         }
 
+        AddConsoleScriptProfiles(directory, venvPython, profiles);
+
         AddSetupProfiles(directory, venvPython, profiles);
 
         if (Directory.Exists(Path.Combine(directory, "tests")) || File.Exists(Path.Combine(directory, "pytest.ini")) ||
@@ -136,6 +138,67 @@ internal sealed partial class PythonDetector : IProjectDetector
         // Gradio apps, scripts with __main__ blocks and Flask/FastAPI apps that start themselves.
         return FsUtil.Profile(id, $"python {entry}", RunProfileKind.Run, ProjectType, FsUtil.Spec(python, directory, entry), isDefault);
     }
+
+    /// <summary>
+    /// <c>[project.scripts]</c> / <c>[tool.poetry.scripts]</c> entry points: run the installed launcher from the venv
+    /// (<c>.venv\Scripts\name.exe</c>) or, for uv projects, <c>uv run name</c>.
+    /// </summary>
+    private void AddConsoleScriptProfiles(string directory, string? venvPython, List<RunProfile> profiles)
+    {
+        var pyproject = FsUtil.ReadText(Path.Combine(directory, "pyproject.toml"));
+        if (pyproject is null)
+        {
+            return;
+        }
+
+        var scriptsDir = venvPython is null ? null : Path.GetDirectoryName(venvPython);
+        var isUv = File.Exists(Path.Combine(directory, "uv.lock"));
+        foreach (var name in ReadScriptNames(pyproject).Take(3))
+        {
+            var id = "py:script:" + name.ToLowerInvariant();
+            var exe = scriptsDir is null ? null : Path.Combine(scriptsDir, name + ".exe");
+            var isDefault = !profiles.Any(p => p.IsDefault);
+            if (exe is not null && File.Exists(exe))
+            {
+                profiles.Add(FsUtil.Profile(id, name, RunProfileKind.Run, ProjectType, FsUtil.Spec(exe, directory), isDefault));
+            }
+            else if (isUv)
+            {
+                profiles.Add(FsUtil.Profile(id, $"uv run {name}", RunProfileKind.Run, ProjectType, FsUtil.Spec("uv", directory, "run", name), isDefault));
+            }
+        }
+    }
+
+    internal static List<string> ReadScriptNames(string pyproject)
+    {
+        var names = new List<string>();
+        var inScripts = false;
+        foreach (var raw in pyproject.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith('['))
+            {
+                inScripts = line is "[project.scripts]" or "[tool.poetry.scripts]";
+                continue;
+            }
+
+            if (!inScripts)
+            {
+                continue;
+            }
+
+            var m = ScriptEntry().Match(line);
+            if (m.Success)
+            {
+                names.Add(m.Groups["name"].Value);
+            }
+        }
+
+        return names;
+    }
+
+    [GeneratedRegex(@"^""?(?<name>[A-Za-z0-9][A-Za-z0-9_.\-]*)""?\s*=", RegexOptions.CultureInvariant)]
+    private static partial Regex ScriptEntry();
 
     /// <summary>Full path of an existing virtual environment interpreter, if any.</summary>
     internal static string? FindVenvPython(string directory)

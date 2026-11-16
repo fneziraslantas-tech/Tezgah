@@ -112,6 +112,20 @@ public sealed class DetectorTests : IDisposable
     }
 
     [Fact]
+    public void Python_ConsoleScriptsFromPyproject()
+    {
+        _dir.File("pyproject.toml", "[project]\nname = \"dub\"\n\n[project.scripts]\ndub = \"dub.cli:main\"\n\"dub-web\" = \"dub.web:main\"\n\n[project.urls]\nx = \"y\"\n");
+        _dir.File(@".venv\Scripts\python.exe", "");
+        var exe = _dir.File(@".venv\Scripts\dub.exe", "");
+        var d = new PythonDetector().Detect(_dir.Path)!;
+        var def = Assert.Single(d.Profiles, p => p.IsDefault);
+        Assert.Equal(exe, def.Command.FileName);
+        Assert.Empty(def.Command.Arguments);
+        Assert.DoesNotContain(d.Profiles, p => p.Id == "py:script:dub-web"); // launcher not installed, not a uv project
+        Assert.Equal(["dub", "dub-web"], PythonDetector.ReadScriptNames(File.ReadAllText(Path.Combine(_dir.Path, "pyproject.toml"))));
+    }
+
+    [Fact]
     public void Python_PlainScriptAndNothingForEmptyDir()
     {
         Assert.Null(new PythonDetector().Detect(_dir.Path));

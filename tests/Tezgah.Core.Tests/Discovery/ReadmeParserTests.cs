@@ -96,6 +96,13 @@ public class ReadmeParserTests
     }
 
     [Fact]
+    public void DescriptionSkipsLanguageSwitchers()
+    {
+        const string md = "# X\n[![b](https://i)](https://l)  [![c](https://i)](https://l)\n\n*English | [简体中文](README-ZH.md) | [日本語](README-JA.md)*\n\nEnglish · [Türkçe](a.md) · [Deutsch](b.md) · [Français](c.md)\n\nReal text here.\n";
+        Assert.Equal("Real text here.", ReadmeParser.ExtractDescription(md));
+    }
+
+    [Fact]
     public void DescriptionIsTruncated()
     {
         var d = ReadmeParser.ExtractDescription("# T\n\n" + new string('a', 500), 200);

@@ -131,7 +131,19 @@ internal static partial class ReadmeParser
         return text.Length <= maxLength ? text : text[..(maxLength - 1)].TrimEnd() + "…";
     }
 
-    private static bool IsLinkOnlyLine(string line) => LinkOnly().IsMatch(line);
+    /// <summary>Badge rows and language switchers ("[English](a) | [中文](b)"): nothing but links, images and separators.</summary>
+    private static bool IsLinkOnlyLine(string line)
+    {
+        if (LinkOnly().IsMatch(line))
+        {
+            return true;
+        }
+
+        var links = Link().Count(line);
+        var withoutLinks = Link().Replace(Image().Replace(HtmlTag().Replace(line, string.Empty), string.Empty), string.Empty);
+        var letters = withoutLinks.Count(char.IsLetterOrDigit);
+        return (links >= 1 && letters == 0) || (links >= 2 && letters < 20);
+    }
 
     public static string StripMarkdown(string text)
     {
