@@ -575,6 +575,17 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         return item;
     }
 
+    /// <summary>
+    /// <c>git clone</c> arguments for a validated URL. <c>core.symlinks=false</c> checks committed symlinks out as plain
+    /// files, so the clone (scanned before it is trusted) never holds a link to a share; as a clone-scope <c>-c</c> it is
+    /// also written to the new repository's config.
+    /// </summary>
+    internal static string[] CloneArguments(string url, string target) =>
+    [
+        "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never", "-c", "protocol.fd.allow=never",
+        "clone", "--progress", "-c", "core.symlinks=false", "--", url, target,
+    ];
+
     public async Task<CatalogItem?> CloneAsync(string gitUrl, string targetParent, IProgress<string>? progress, CancellationToken ct)
     {
         if (!CloneUrlValidator.IsValid(gitUrl, out var error))
@@ -599,12 +610,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
 
         var url = gitUrl.Trim();
         progress?.Report($"git clone {url}");
-        string[] args =
-        [
-            "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never", "-c", "protocol.fd.allow=never",
-            "clone", "--progress", "--", url, target,
-        ];
-        var result = await Cli.RunAsync("git", args, Environment.SystemDirectory, CloneTimeout, ct, GitClient.BuildEnvironment(target, [], network: true), line => progress?.Report(line)).ConfigureAwait(false);
+        var result = await Cli.RunAsync("git", CloneArguments(url, target), Environment.SystemDirectory, CloneTimeout, ct, GitClient.BuildEnvironment(target, [], network: true), line => progress?.Report(line)).ConfigureAwait(false);
         if (!result.Success)
         {
             var message = result.TimedOut ? L.T("git clone zaman aşımına uğradı.", "git clone timed out.") : result.StdErr.Trim();

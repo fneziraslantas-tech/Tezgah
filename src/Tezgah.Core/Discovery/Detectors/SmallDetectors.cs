@@ -54,7 +54,7 @@ internal sealed partial class GoDetector : IProjectDetector
         }
 
         var cmdDir = Path.Combine(directory, "cmd");
-        if (Directory.Exists(cmdDir))
+        if (!FsUtil.HasLink(cmdDir) && Directory.Exists(cmdDir)) // never list a linked folder
         {
             foreach (var sub in FsUtil.TopLevelDirectories(cmdDir).Where(HasMainPackage).Take(4))
             {

@@ -180,11 +180,32 @@ public sealed class GitHardeningTests : IDisposable
         var net = GitClient.BuildEnvironment(@"C:\src\repo", [], network: true);
         var netPairs = Enumerable.Range(0, int.Parse(net["GIT_CONFIG_COUNT"], System.Globalization.CultureInfo.InvariantCulture)).Select(i => net[$"GIT_CONFIG_KEY_{i}"]).ToList();
         Assert.DoesNotContain("credential.helper", netPairs);
+        Assert.DoesNotContain("core.excludesFile", netPairs);
+        Assert.Contains(("core.attributesFile", string.Empty), pairs);
+        Assert.Contains(pairs, p => p.Item1 == "core.excludesFile" && !GitRepoGuard.LooksRemote(p.Item2));
         Assert.Contains("log.showSignature", netPairs);
         Assert.Equal(@"C:\src", env["GIT_CEILING_DIRECTORIES"]);
 
         var args = GitClient.BuildArguments(@"C:\src\repo", ["status"]);
         Assert.Equal(["--no-pager", "--no-optional-locks", "-C", @"C:\src\repo", "status"], args);
+    }
+
+    [Fact]
+    public void PinnedExcludesFileIsTheUsersOwnAndLocal()
+    {
+        // Only the user's config decides the pinned excludes file; a share or a runtime-prefix value pins nothing.
+        var home = _dir.Sub("home");
+        var xdg = Path.Combine(home, ".config");
+        Assert.Equal(Path.Combine(xdg, "git", "ignore"), GitClient.ResolveUserExcludesFile(home, xdg));
+
+        File.WriteAllText(Path.Combine(home, ".gitconfig"), "[core]\n\texcludesFile = ~/.gitignore_global\n");
+        Assert.Equal(Path.Combine(home, ".gitignore_global"), GitClient.ResolveUserExcludesFile(home, xdg));
+
+        File.WriteAllText(Path.Combine(home, ".gitconfig"), "[core]\n\texcludesFile = :(optional)//192.0.2.77/share/x\n");
+        Assert.Equal(string.Empty, GitClient.ResolveUserExcludesFile(home, xdg));
+
+        File.WriteAllText(Path.Combine(home, ".gitconfig"), "[core]\n\texcludesFile = %(prefix)/etc/ignore\n");
+        Assert.Equal(string.Empty, GitClient.ResolveUserExcludesFile(home, xdg));
     }
 
     [Fact]

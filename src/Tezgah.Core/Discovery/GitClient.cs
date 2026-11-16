@@ -89,10 +89,62 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
     [
         new("core.sshCommand", string.Empty),
         new("credential.helper", string.Empty),
+
+        // Pathname values git opens during status/ls-files: a repository value could reach a share through a link in the
+        // worktree (GitRepoGuard checks that too; this is the second layer). Attributes from the user's global file are
+        // dropped (they only tune diff/merge output); the user's own excludes file is kept so ignored files stay ignored.
+        new("core.attributesFile", string.Empty),
+        new("core.excludesFile", ResolveUserExcludesFile(GitHome())),
     ];
 
     /// <summary>A program path that cannot exist (System32 is not writable without elevation).</summary>
     internal static string DisabledProgram => Path.Combine(Environment.SystemDirectory, "tezgah-disabled-program.exe");
+
+    /// <summary>git's home directory: <c>%HOME%</c> when set (Git for Windows honours it), otherwise the user profile.</summary>
+    internal static string GitHome() =>
+        Environment.GetEnvironmentVariable("HOME") is { Length: > 0 } home ? home : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    /// <summary>
+    /// The user's own excludes file as git picks it outside any repository: <c>core.excludesFile</c> from <c>~/.gitconfig</c>
+    /// (wins) or the XDG config, else git's default <c>&lt;XDG config&gt;/git/ignore</c>. Empty when that is not a fully
+    /// qualified local path, so the pinned value never opens a share either.
+    /// </summary>
+    internal static string ResolveUserExcludesFile(string home, string? xdgConfigHome = null)
+    {
+        try
+        {
+            xdgConfigHome ??= Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } x ? x : Path.Combine(home, ".config");
+            string? value = null;
+            foreach (var file in new[] { Path.Combine(xdgConfigHome, "git", "config"), Path.Combine(home, ".gitconfig") })
+            {
+                if (GitRepoGuard.ReadSmall(file, 256 * 1024) is { } text && GitConfigParser.TryParse(text, strict: false, out var entries, out _))
+                {
+                    value = entries.LastOrDefault(e => e.Key.Equals("core.excludesfile", StringComparison.OrdinalIgnoreCase) && e.Value is not null)?.Value ?? value;
+                }
+            }
+
+            var path = Path.Combine(xdgConfigHome, "git", "ignore");
+            if (value is not null)
+            {
+                path = GitRepoGuard.StripPathnamePrefixes(value, out var runtimePrefix);
+                if (runtimePrefix)
+                {
+                    return string.Empty; // relative to git's install folder: not worth resolving
+                }
+            }
+
+            if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith(@"~\", StringComparison.Ordinal))
+            {
+                path = Path.Combine(home, path[2..]);
+            }
+
+            return GitRepoGuard.IsLocalPath(path) && !GitRepoGuard.LooksRemote(path) ? path : string.Empty;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
 
     private int _processesStarted;
 

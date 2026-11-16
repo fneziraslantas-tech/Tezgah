@@ -55,7 +55,7 @@ internal sealed class ProjectInspector
     /// <summary>Runs the detectors (never executes project code). Cancellation is checked between and inside detectors.</summary>
     public FolderDetection Detect(string directory, bool includeReadmeCommands, CancellationToken ct = default)
     {
-        using var scope = DetectionScope.Enter(DetectionBudget, ct);
+        using var scope = DetectionScope.Enter(DetectionBudget, directory, ct);
         var detections = new List<ProjectDetection>();
         foreach (var detector in _detectors)
         {

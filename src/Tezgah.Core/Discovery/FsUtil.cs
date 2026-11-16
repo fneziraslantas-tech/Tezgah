@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Enumeration;
 using System.Text;
 using Tezgah.Core.Model;
+using Tezgah.Core.Safety;
 
 namespace Tezgah.Core.Discovery;
 
@@ -30,13 +31,45 @@ internal static class FsUtil
     }
 
     /// <summary>
-    /// Reads a small text file. Returns null when missing, too big, inaccessible, or an online-only cloud placeholder
-    /// (reading those would trigger a download).
+    /// True when <paramref name="path"/> itself, or a directory between the folder being inspected
+    /// (<see cref="DetectionScope.Root"/>) and it, is a link-like reparse point (symlink, junction, mount point, unknown
+    /// tag; cloud placeholders, dedup and WOF files are not links). Opening such a path follows the link, possibly to a UNC
+    /// share whose SMB connection carries the user's NTLM credentials, before anything was trusted. Only link metadata
+    /// is read, top-down, so no link is ever traversed. <paramref name="root"/> overrides the scope's folder; with
+    /// neither (or a path outside it) only the last component is checked.
+    /// </summary>
+    public static bool HasLink(string path, string? root = null)
+    {
+        try
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            var from = (root ?? DetectionScope.Root) is { } r && PathGuard.IsSameOrUnder(full, r)
+                ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(r))
+                : Path.GetDirectoryName(full) ?? full;
+            return GitRepoGuard.FindLinkBelow(from, full) is not null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return true; // cannot tell: treat as a link (fail closed)
+        }
+    }
+
+    /// <summary><see cref="File.Exists(string?)"/> for a path inside a scanned folder, false when it is reached through a link.</summary>
+    public static bool FileExists(string path, string? root = null) => !HasLink(path, root) && File.Exists(path);
+
+    /// <summary>
+    /// Reads a small text file. Returns null when missing, too big, inaccessible, reached through a link (see
+    /// <see cref="HasLink"/>) or an online-only cloud placeholder (reading those would trigger a download).
     /// </summary>
     public static string? ReadText(string path, long maxBytes = DefaultMaxReadBytes)
     {
         try
         {
+            if (HasLink(path))
+            {
+                return null;
+            }
+
             var fi = new FileInfo(path);
             if (!fi.Exists || fi.Length > maxBytes || (fi.Attributes & CloudPlaceholder) != 0)
             {
@@ -55,11 +88,16 @@ internal static class FsUtil
         }
     }
 
-    /// <summary>Reads at most <paramref name="maxChars"/> characters (for sniffing imports in big source files).</summary>
+    /// <summary>Reads at most <paramref name="maxChars"/> characters (for sniffing imports in big source files); same refusals as <see cref="ReadText"/>.</summary>
     public static string? ReadHead(string path, int maxChars = 64 * 1024)
     {
         try
         {
+            if (HasLink(path))
+            {
+                return null;
+            }
+
             var fi = new FileInfo(path);
             if (!fi.Exists || (fi.Attributes & CloudPlaceholder) != 0)
             {

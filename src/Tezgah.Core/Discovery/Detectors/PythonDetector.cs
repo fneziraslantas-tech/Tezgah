@@ -245,8 +245,9 @@ internal sealed partial class PythonDetector : IProjectDetector
     {
         foreach (var venv in new[] { ".venv", "venv", "env" })
         {
+            // A ".venv" symlink or junction (possibly to a share) is never traversed.
             var p = Path.Combine(directory, venv, "Scripts", "python.exe");
-            if (File.Exists(p))
+            if (FsUtil.FileExists(p, directory))
             {
                 return p;
             }
