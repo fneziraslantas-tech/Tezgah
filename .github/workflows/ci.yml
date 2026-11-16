@@ -36,6 +36,13 @@ jobs:
           $out = dotnet list Tezgah.sln package --vulnerable --include-transitive 2>&1 | Out-String
           Write-Output $out
           if ($out -match 'has the following vulnerable packages') { throw 'Vulnerable packages found' }
+      - name: Publish smoke test (same command as release.yml)
+        shell: pwsh
+        run: |
+          dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false -o "$env:RUNNER_TEMP/publish-smoke"
+          if (-not (Test-Path "$env:RUNNER_TEMP/publish-smoke/Tezgah.exe")) { throw 'Tezgah.exe was not produced' }
+          # Unlocked publish adds the SDK-implicit ILLink.Tasks to the lock files; undo that on the runner.
+          git checkout -- '**/packages.lock.json'
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
