@@ -156,6 +156,7 @@ internal static class GitMetadataReader
                 Stashes = CountStashes(),
                 LastCommitAt = lastAt,
                 LastCommitSubject = subject,
+                HasCommits = headId is not null,
                 UnpushedCommits = unpushed,
                 LinkedWorktrees = LinkedWorktrees(worktree),
                 StatusUnknown = true,
@@ -312,7 +313,9 @@ internal static class GitMetadataReader
                 return (commit.CommittedAt, commit.Subject);
             }
 
-            // Packed object: the newest HEAD reflog entry gives the time HEAD last moved and, for commits made here, the subject.
+            // Packed object. The newest HEAD reflog entry records when HEAD last moved (clone, checkout, pull, reset...), which
+            // is not the commit time; it is used only when it is the record of this very commit being made here ("commit",
+            // "commit (initial)", "commit (amend)", "commit (merge)" moving HEAD to headId). Otherwise the time is unknown.
             var last = LastLine(Path.Combine(gitDir, "logs", "HEAD"));
             if (last is null)
             {
@@ -320,23 +323,28 @@ internal static class GitMetadataReader
             }
 
             var tab = last.IndexOf('\t', StringComparison.Ordinal);
-            var meta = (tab >= 0 ? last[..tab] : last).Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var at = meta.Length >= 2 ? ParseGitTime(meta[^2], meta[^1]) : null;
-            string? subject = null;
-            if (tab >= 0)
+            if (tab < 0)
             {
-                var message = last[(tab + 1)..];
-                foreach (var prefix in new[] { "commit: ", "commit (initial): ", "commit (amend): ", "commit (merge): " })
+                return (null, null);
+            }
+
+            var meta = last[..tab].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var message = last[(tab + 1)..];
+            if (meta.Length < 4 || !string.Equals(meta[1], headId, StringComparison.Ordinal))
+            {
+                return (null, null);
+            }
+
+            foreach (var prefix in new[] { "commit: ", "commit (initial): ", "commit (amend): ", "commit (merge): " })
+            {
+                if (message.StartsWith(prefix, StringComparison.Ordinal))
                 {
-                    if (message.StartsWith(prefix, StringComparison.Ordinal))
-                    {
-                        subject = message[prefix.Length..];
-                        break;
-                    }
+                    var subject = message[prefix.Length..];
+                    return (ParseGitTime(meta[^2], meta[^1]), subject.Length == 0 ? null : subject);
                 }
             }
 
-            return (at, subject);
+            return (null, null);
         }
 
         private sealed record Commit(IReadOnlyList<string> Parents, DateTimeOffset? CommittedAt, string? Subject);

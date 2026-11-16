@@ -559,13 +559,13 @@ internal sealed partial class UninstallService(
                 parts.Add(L.T($"{info.Ahead} gönderilmemiş commit", $"{info.Ahead} unpushed commit(s)"));
             }
 
-            if (!info.HasUpstream && info.LastCommitAt is not null)
+            if (!info.HasUpstream && info.HasCommits)
             {
                 parts.Add(L.T(
                     $"'{info.Branch ?? "?"}' dalının uzakta karşılığı yok",
                     $"branch '{info.Branch ?? "?"}' has no upstream"));
             }
-            else if (info.UpstreamGone && info.LastCommitAt is not null)
+            else if (info.UpstreamGone && info.HasCommits)
             {
                 parts.Add(L.T(
                     $"'{info.Branch ?? "?"}' dalının uzaktaki karşılığı silinmiş",

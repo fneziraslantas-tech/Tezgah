@@ -92,8 +92,19 @@ public sealed record GitInfo
     public int ModifiedFiles { get; init; }
     public int UntrackedFiles { get; init; }
     public int Stashes { get; init; }
+    /// <summary>Committer time of HEAD's commit; null when unknown (e.g. an untrusted repository whose HEAD commit is packed).</summary>
     public DateTimeOffset? LastCommitAt { get; init; }
+
     public string? LastCommitSubject { get; init; }
+
+    private readonly bool? _hasCommits;
+
+    /// <summary>HEAD points at a commit (not an unborn branch). Defaults to <c>LastCommitAt is not null</c> when not set.</summary>
+    public bool HasCommits
+    {
+        get => _hasCommits ?? LastCommitAt is not null;
+        init => _hasCommits = value;
+    }
 
     /// <summary>
     /// Commits reachable from any local branch (not only HEAD) but from no remote-tracking ref. Null when it could not be
@@ -118,7 +129,7 @@ public sealed record GitInfo
 
     /// <summary>Unsaved work that was actually observed (for display; deletion safety uses <see cref="HasUnsavedWork"/>).</summary>
     public bool HasKnownUnsavedWork =>
-        ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || ((!HasUpstream || UpstreamGone) && LastCommitAt is not null) ||
+        ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || ((!HasUpstream || UpstreamGone) && HasCommits) ||
         UnpushedCommits > 0 || LinkedWorktrees.Count > 0;
 
     /// <summary>True when deleting the folder would (or, with unknown state, might) lose work that exists nowhere else.</summary>

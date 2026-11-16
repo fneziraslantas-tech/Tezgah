@@ -362,6 +362,65 @@ public sealed class UntrustedGitTests : IDisposable
         Assert.True(info.HasUnsavedWork);
     }
 
+    [Fact]
+    public async Task Packed_head_commit_never_reports_the_reflog_time_as_commit_time()
+    {
+        // Reviewer PoC: with HEAD's commit packed (clone, gc), the newest HEAD reflog entry is clone/checkout/pull time.
+        var source = _dir.Sub("packsrc");
+        if (!TestTools.GitInitWithCommit(source))
+        {
+            return;
+        }
+
+        // An old commit: committer date years ago.
+        File.WriteAllText(Path.Combine(source, "old.txt"), "old");
+        Assert.Equal(0, TestTools.Run("git", source, "add", "-A"));
+        var psi = new ProcessStartInfo("git") { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = source };
+        foreach (var a in new[] { "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "old work" })
+        {
+            psi.ArgumentList.Add(a);
+        }
+
+        psi.Environment["GIT_COMMITTER_DATE"] = "2019-03-04T05:06:07+0300";
+        psi.Environment["GIT_AUTHOR_DATE"] = "2019-03-04T05:06:07+0300";
+        using (var p = Process.Start(psi)!)
+        {
+            p.WaitForExit(60_000);
+            Assert.Equal(0, p.ExitCode);
+        }
+
+        var clone = Path.Combine(_dir.Path, "packclone");
+        Assert.Equal(0, TestTools.Run("git", _dir.Path, "clone", "-q", "--no-local", source, clone));
+        Assert.False(File.Exists(Path.Combine(clone, ".git", "objects", GitOut(clone, "rev-parse", "HEAD")[..2], GitOut(clone, "rev-parse", "HEAD")[2..])),
+            "precondition: a clone keeps HEAD's commit packed");
+
+        var cloned = GitMetadataReader.Read(clone)!;
+        Assert.Null(cloned.LastCommitAt); // the reflog says "clone: ...", which is not the commit time
+        Assert.Null(cloned.LastCommitSubject);
+        Assert.True(cloned.HasCommits);
+
+        var item = await Inspector(new GitClient(NullLogger<GitClient>.Instance)).InspectAsync(clone, fetchGit: false, force: true, computeSize: false, CancellationToken.None);
+        Assert.NotNull(item);
+        Assert.Null(item!.Git!.LastCommitAt);
+
+        // Commit made here, then packed by gc: the matching "commit:" reflog entry is the commit time.
+        File.WriteAllText(Path.Combine(source, "new.txt"), "new");
+        Assert.Equal(0, TestTools.Run("git", source, "add", "-A"));
+        Assert.Equal(0, TestTools.Run("git", source, "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fresh work"));
+        Assert.Equal(0, TestTools.Run("git", source, "gc", "-q"));
+        var head = GitOut(source, "rev-parse", "HEAD");
+        Assert.False(File.Exists(Path.Combine(source, ".git", "objects", head[..2], head[2..])), "precondition: gc packs HEAD's commit");
+        var packed = GitMetadataReader.Read(source)!;
+        Assert.Equal(DateTimeOffset.Parse(GitOut(source, "log", "-1", "--format=%cI"), System.Globalization.CultureInfo.InvariantCulture), packed.LastCommitAt);
+        Assert.Equal("fresh work", packed.LastCommitSubject);
+
+        // HEAD moved by a checkout afterwards: the newest entry is no longer a commit record.
+        Assert.Equal(0, TestTools.Run("git", source, "checkout", "-q", "HEAD~1"));
+        var moved = GitMetadataReader.Read(source)!;
+        Assert.Null(moved.LastCommitAt);
+        Assert.True(moved.HasCommits);
+    }
+
     private static async Task AssertRefusedWithoutGitAsync(string repo)
     {
         // Uninstall planning path: the guard refuses, so no git process runs and the state is unknown (fail closed).

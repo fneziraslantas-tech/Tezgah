@@ -189,4 +189,57 @@ public sealed class CatalogTrustTests : IDisposable
         // Untrusted: git is not run at all (metadata is read without it); trusted: the CLI runs and may fetch.
         Assert.Equal([true], git.Fetches);
     }
+    private sealed class FixedFsProvider(Func<IReadOnlyList<CatalogItem>> items) : IDiscoveryProvider
+    {
+        public string Id => Sources.FileSystem;
+
+        public Task<bool> IsAvailableAsync(CancellationToken ct) => Task.FromResult(true);
+
+        public Task<IReadOnlyList<CatalogItem>> DiscoverAsync(TezgahSettings settings, IProgress<ScanProgress>? progress, CancellationToken ct) =>
+            Task.FromResult(items());
+    }
+
+    private sealed class CommitTimeGit(DateTimeOffset at) : IGitClient
+    {
+        public Task<bool> IsAvailableAsync(CancellationToken ct) => Task.FromResult(true);
+
+        public Task<GitInfo?> GetInfoAsync(string repoPath, bool fetch, CancellationToken ct) =>
+            Task.FromResult<GitInfo?>(new GitInfo { Branch = "main", LastCommitAt = at, LastCommitSubject = "real" });
+
+        public Task<CommandResult> PullAsync(string repoPath, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task Trusted_git_refresh_recomputes_last_activity_from_the_real_commit_time()
+    {
+        var path = _dir.Sub("trusted-repo");
+        _dir.Sub("trusted-repo", ".git");
+        var old = new DateTimeOffset(2020, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var commit = new DateTimeOffset(2024, 5, 6, 7, 8, 9, TimeSpan.Zero);
+        CatalogItem Scanned() => new()
+        {
+            Id = ItemIds.ForPath(path),
+            Kind = ItemKind.GitRepository,
+            Source = Sources.FileSystem,
+            Name = "trusted-repo",
+            Path = path,
+            LastActivity = old,
+            InstalledAt = Directory.GetCreationTimeUtc(path),
+            Git = new GitInfo { StatusUnknown = true, UnpushedCommits = null },
+        };
+
+        var git = new CommitTimeGit(commit);
+        using var svc = new CatalogService([new FixedFsProvider(() => [Scanned()])], new CatalogStore(Path.Combine(_dir.Path, "c.json")), git,
+            DetectorTests.NewInspector(git), NullLogger<CatalogService>.Instance);
+        await svc.ScanAsync(null, CancellationToken.None);
+        var id = ItemIds.ForPath(path);
+        await svc.UpdateMetaAsync(id, m => m with { Trusted = true }, CancellationToken.None);
+        Assert.True(svc.IsTrusted(id));
+
+        await svc.ScanAsync(null, CancellationToken.None);
+
+        var item = svc.State.Items.Single(i => i.Id == id);
+        Assert.Equal(commit, item.Git!.LastCommitAt);
+        Assert.Equal(commit, item.LastActivity);
+    }
 }

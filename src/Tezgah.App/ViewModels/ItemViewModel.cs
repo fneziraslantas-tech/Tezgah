@@ -97,7 +97,7 @@ public sealed partial class ItemViewModel : ObservableObject
 
     public bool IsDirty => Item.Git is { } g && (g.ModifiedFiles > 0 || g.UntrackedFiles > 0 || g.Stashes > 0);
 
-    public bool IsUnpushed => Item.Git is { } g && (g.Ahead > 0 || g.UnpushedCommits > 0 || (g.UnpushedCommits is null && !g.StatusUnknown) || ((!g.HasUpstream || g.UpstreamGone) && g.LastCommitAt is not null));
+    public bool IsUnpushed => Item.Git is { } g && (g.Ahead > 0 || g.UnpushedCommits > 0 || (g.UnpushedCommits is null && !g.StatusUnknown) || ((!g.HasUpstream || g.UpstreamGone) && g.HasCommits));
 
     public string AttentionText
     {
@@ -113,7 +113,7 @@ public sealed partial class ItemViewModel : ObservableObject
             {
                 parts.Add(_s.Format("Git_Unpushed", g.Ahead));
             }
-            else if (!g.HasUpstream && g.LastCommitAt is not null)
+            else if (!g.HasUpstream && g.HasCommits)
             {
                 parts.Add(_s.Text("Git_NoUpstream"));
             }

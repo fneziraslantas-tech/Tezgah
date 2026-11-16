@@ -232,6 +232,7 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
             Stashes = stashes.Value,
             LastCommitAt = lastCommitAt,
             LastCommitSubject = subject,
+            HasCommits = !parsed.IsInitialCommit,
         };
     }
 

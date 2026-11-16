@@ -209,7 +209,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
 
         if (fresh.Count > 0)
         {
-            UpdateState(s => s with { Items = s.Items.Select(i => fresh.TryGetValue(i, out var g) ? i with { Git = g } : i).ToList() });
+            UpdateState(s => s with { Items = s.Items.Select(i => fresh.TryGetValue(i, out var g) ? i with { Git = g, LastActivity = FsUtil.Max(i.LastActivity, g.LastCommitAt) } : i).ToList() });
         }
     }
 
