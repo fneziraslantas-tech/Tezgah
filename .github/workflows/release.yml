@@ -26,7 +26,7 @@ jobs:
       - run: dotnet test Tezgah.sln -c Release --no-restore
       # The locked restore above verified every locked package by content hash. A self-contained single-file publish
       # makes the SDK add an implicit Microsoft.NET.ILLink.Tasks reference whose version follows the SDK patch, so it
-      # cannot be pinned in packages.lock.json; only this step relaxes locked mode to let it in.
+      # cannot be pinned in packages.lock.json; only this final build step relaxes locked mode to let it in (nothing reads the lock files afterwards).
       - name: Publish (self-contained single file)
         run: dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false -o out
       - shell: pwsh
