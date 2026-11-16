@@ -423,10 +423,17 @@ internal sealed partial class UninstallService(
     /// Git repositories strictly inside <paramref name="root"/> (a <c>.git</c> directory or file), including ignored ones git
     /// status never mentions, plus catalog repositories under it. Links are never followed; the walk is bounded.
     /// </summary>
-    internal List<string> FindNestedRepositories(string root, CancellationToken ct, out bool incomplete)
+    /// <remarks>
+    /// Uses the same link test as <see cref="FileRemover"/> (<paramref name="isLinkLike"/>, default
+    /// <see cref="FileRemover.IsLinkLike"/>): benign reparse points such as OneDrive placeholders are ordinary folders that the
+    /// deletion recurses into, so they are searched too; only real links (whose targets the deletion never touches) are
+    /// skipped. Folders that cannot be listed make the result incomplete (fail closed).
+    /// </remarks>
+    internal List<string> FindNestedRepositories(string root, CancellationToken ct, out bool incomplete, Func<FileSystemInfo, bool>? isLinkLike = null)
     {
         const int maxDirectories = 20_000;
         const int maxDepth = 8;
+        isLinkLike ??= FileRemover.IsLinkLike;
         incomplete = false;
         var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var i in catalog.State.Items)
@@ -438,7 +445,7 @@ internal sealed partial class UninstallService(
             }
         }
 
-        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true, RecurseSubdirectories = false };
+        var options = WalkOptions;
         var stack = new Stack<(string Dir, int Depth)>();
         stack.Push((root, 0));
         var visited = 0;
@@ -452,22 +459,40 @@ internal sealed partial class UninstallService(
                 break;
             }
 
-            IEnumerable<string> children;
+            List<DirectoryInfo> children;
             try
             {
-                children = Directory.EnumerateDirectories(dir, "*", options).ToList();
+                children = new DirectoryInfo(dir).EnumerateDirectories("*", options).ToList();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                incomplete = true; // the deletion would still remove whatever is in there
                 continue;
             }
 
-            foreach (var child in children)
+            foreach (var info in children)
             {
-                var name = Path.GetFileName(child);
+                var child = info.FullName;
+                var name = info.Name;
                 if (name.Equals(".git", StringComparison.OrdinalIgnoreCase) || name.Equals("node_modules", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
+                }
+
+                bool link;
+                try
+                {
+                    link = isLinkLike(info);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    incomplete = true;
+                    continue;
+                }
+
+                if (link)
+                {
+                    continue; // links are removed as links: their targets are never deleted
                 }
 
                 if (ProjectInspector.IsGitRoot(child))
@@ -773,22 +798,40 @@ internal sealed partial class UninstallService(
 
         if (FindDataMarker(location, ct) is { } marker)
         {
-            return L.T($"kullanıcı verisi içeriyor: {marker}", $"it holds user data: {marker}");
+            return L.T($"kullanıcı verisi içerebilir: {marker}", $"it may hold user data: {marker}");
         }
 
         return null;
     }
 
-    /// <summary>First sign of user data (databases, repositories, backups) inside <paramref name="folder"/>, bounded walk.</summary>
-    internal static string? FindDataMarker(string folder, CancellationToken ct)
+    /// <summary>Directory walk options shared by the safety scans: nothing skipped by attribute, link decisions are explicit.</summary>
+    private static EnumerationOptions WalkOptions => new() { AttributesToSkip = 0, IgnoreInaccessible = false, RecurseSubdirectories = false, ReturnSpecialDirectories = false };
+
+    /// <summary>
+    /// First sign of user data (databases, repositories, backups) inside <paramref name="folder"/>, bounded walk. When the walk
+    /// could not look everywhere (bounds hit, unreadable folder) and found nothing, the result is a "not fully checked"
+    /// description instead of null: callers must not treat an incomplete search as "no user data" (fail closed). Benign
+    /// reparse points (cloud placeholders) are searched like ordinary folders, as the deletion recurses into them too.
+    /// </summary>
+    internal static string? FindDataMarker(string folder, CancellationToken ct, Func<FileSystemInfo, bool>? isLinkLike = null)
     {
-        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true, RecurseSubdirectories = false };
+        const int maxDirectories = 5_000;
+        const int maxDepth = 6;
+        isLinkLike ??= FileRemover.IsLinkLike;
+        var options = WalkOptions;
         var stack = new Stack<(string Dir, int Depth)>();
         stack.Push((folder, 0));
         var visited = 0;
-        while (stack.Count > 0 && visited++ < 5_000)
+        var incomplete = false;
+        while (stack.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
+            if (++visited > maxDirectories)
+            {
+                incomplete = true;
+                break;
+            }
+
             var (dir, depth) = stack.Pop();
             try
             {
@@ -801,9 +844,18 @@ internal sealed partial class UninstallService(
                             return sub.FullName;
                         }
 
-                        if (depth < 6)
+                        if (isLinkLike(sub))
+                        {
+                            continue; // removed as a link, its target is never touched
+                        }
+
+                        if (depth < maxDepth)
                         {
                             stack.Push((sub.FullName, depth + 1));
+                        }
+                        else
+                        {
+                            incomplete = true;
                         }
                     }
                     else if (DataMarkerFiles.Contains(entry.Name) || DataMarkerExtensions.Any(e => entry.Name.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
@@ -814,11 +866,13 @@ internal sealed partial class UninstallService(
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // best effort
+                incomplete = true;
             }
         }
 
-        return null;
+        return incomplete
+            ? L.T($"{folder} tamamen denetlenemedi (çok büyük, çok derin ya da okunamayan klasörler var)", $"{folder} could not be fully checked (too large, too deep or unreadable folders)")
+            : null;
     }
 
     private void PlanPackageTool(CatalogItem item, bool recycle, List<UninstallStep> steps, List<PlanWarning> warnings)
@@ -1109,8 +1163,8 @@ internal sealed partial class UninstallService(
                     if (FindDataMarker(target, ct) is { } marker)
                     {
                         throw new InvalidOperationException(L.T(
-                            $"Kalan klasörde kullanıcı verisi var ({marker}); dokunulmadı.",
-                            $"The remaining folder holds user data ({marker}); left untouched."));
+                            $"Kalan klasörde kullanıcı verisi olabilir ({marker}); dokunulmadı.",
+                            $"The remaining folder may hold user data ({marker}); left untouched."));
                     }
 
                     var remaining = Directory.EnumerateFileSystemEntries(target, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }).Take(100_001).Count();

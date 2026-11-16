@@ -555,6 +555,54 @@ public sealed class UninstallServiceTests : IDisposable
     }
 
     [Fact]
+    public void Benign_reparse_folders_are_searched_for_nested_repositories()
+    {
+        // A OneDrive placeholder folder is a reparse point with a benign tag: FileRemover recurses into it and deletes what
+        // is inside, so the nested-repository search must look inside too. A junction stands in for the placeholder; the
+        // link classifier is the one the deletion uses, here told that this reparse point is benign.
+        var item = Repo();
+        var elsewhere = _dir.Sub("cloud", "repo");
+        Directory.CreateDirectory(Path.Combine(elsewhere, ".git"));
+        var placeholder = Path.Combine(item.Path!, "OneDriveFolder");
+        if (!Tezgah.Core.Tests.Discovery.TestTools.TryCreateJunction(placeholder, Path.Combine(_dir.Path, "cloud")))
+        {
+            return;
+        }
+
+        var (service, _, _) = Create(item, CleanGit);
+
+        var benign = service.FindNestedRepositories(item.Path!, CancellationToken.None, out var incomplete, isLinkLike: _ => false);
+        Assert.Contains(Path.Combine(placeholder, "repo"), benign, StringComparer.OrdinalIgnoreCase);
+        Assert.False(incomplete);
+
+        // The shared default classifier treats a real junction as a link (removed as a link, target untouched): not searched.
+        var linked = service.FindNestedRepositories(item.Path!, CancellationToken.None, out _);
+        Assert.DoesNotContain(linked, p => p.StartsWith(placeholder, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Data_marker_search_inside_benign_reparse_folders_and_fails_closed_at_its_bounds()
+    {
+        var folder = _dir.Sub("app");
+        _dir.Sub("cloudtarget", "db");
+        var placeholder = Path.Combine(folder, "Synced");
+        if (Tezgah.Core.Tests.Discovery.TestTools.TryCreateJunction(placeholder, Path.Combine(_dir.Path, "cloudtarget")))
+        {
+            Assert.Equal(Path.Combine(placeholder, "db"), UninstallService.FindDataMarker(folder, CancellationToken.None, isLinkLike: _ => false), ignoreCase: true);
+        }
+
+        // Too deep to look everywhere and nothing found: "not fully checked" (never "no user data").
+        var deep = _dir.Sub(["deep", .. Enumerable.Range(0, 10).Select(i => $"d{i}")]);
+        File.WriteAllText(Path.Combine(deep, "notes.txt"), "x");
+        var marker = UninstallService.FindDataMarker(Path.Combine(_dir.Path, "deep"), CancellationToken.None);
+        Assert.NotNull(marker);
+
+        var shallow = _dir.Sub("shallow", "a");
+        File.WriteAllText(Path.Combine(shallow, "x.dll"), "x");
+        Assert.Null(UninstallService.FindDataMarker(Path.Combine(_dir.Path, "shallow"), CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Work_created_after_planning_refuses_execution()
     {
         var item = Repo();
