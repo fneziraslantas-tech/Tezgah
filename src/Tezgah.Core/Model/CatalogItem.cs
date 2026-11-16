@@ -1,0 +1,112 @@
+namespace Tezgah.Core.Model;
+
+/// <summary>What kind of thing a catalog entry represents.</summary>
+public enum ItemKind
+{
+    /// <summary>A folder containing a <c>.git</c> directory (usually cloned from GitHub).</summary>
+    GitRepository,
+
+    /// <summary>A recognised project folder without git (e.g. an extracted zip from GitHub).</summary>
+    ProjectFolder,
+
+    /// <summary>A program registered in Windows "Apps &amp; features" (registry Uninstall keys).</summary>
+    InstalledApp,
+
+    /// <summary>A command-line tool installed through a package manager (pipx, npm -g, cargo, dotnet tool, scoop...).</summary>
+    PackageTool,
+}
+
+/// <summary>Well-known provider identifiers. Providers set <see cref="CatalogItem.Source"/> to one of these.</summary>
+public static class Sources
+{
+    public const string FileSystem = "fs";
+    public const string Registry = "registry";
+    public const string Pipx = "pipx";
+    public const string NpmGlobal = "npm";
+    public const string Cargo = "cargo";
+    public const string DotnetTool = "dotnet-tool";
+    public const string Scoop = "scoop";
+    public const string GoBin = "go";
+}
+
+/// <summary>
+/// One discovered thing on the machine. Immutable snapshot produced by a discovery provider;
+/// user-editable data (tags, notes, trust...) lives separately in <see cref="UserMeta"/>.
+/// </summary>
+public sealed record CatalogItem
+{
+    /// <summary>Stable identifier. Use <see cref="ItemIds"/> to build it so rescans map to the same id.</summary>
+    public required string Id { get; init; }
+
+    public required ItemKind Kind { get; init; }
+
+    /// <summary>Provider id, one of <see cref="Sources"/>.</summary>
+    public required string Source { get; init; }
+
+    public required string Name { get; init; }
+
+    /// <summary>Root folder on disk (repos/projects/install location). Null when unknown.</summary>
+    public string? Path { get; init; }
+
+    public string? Version { get; init; }
+
+    public string? Publisher { get; init; }
+
+    /// <summary>Short description (package.json description, README first paragraph, registry comment...).</summary>
+    public string? Description { get; init; }
+
+    public DateTimeOffset? InstalledAt { get; init; }
+
+    /// <summary>Last meaningful activity: last commit, last file write, or last run - whichever is newest.</summary>
+    public DateTimeOffset? LastActivity { get; init; }
+
+    /// <summary>Total size on disk in bytes, if computed.</summary>
+    public long? SizeBytes { get; init; }
+
+    public GitInfo? Git { get; init; }
+
+    /// <summary>Detected ecosystems, e.g. "node", "python", "dotnet", "rust", "go", "java", "docker", "static".</summary>
+    public IReadOnlyList<string> ProjectTypes { get; init; } = [];
+
+    /// <summary>Ready-to-run commands (run / setup / build / test) detected for this item.</summary>
+    public IReadOnlyList<RunProfile> RunProfiles { get; init; } = [];
+
+    /// <summary>Regenerable folders (node_modules, .venv, bin/obj, target...) that can be cleaned to free space.</summary>
+    public IReadOnlyList<ArtifactDir> Artifacts { get; init; } = [];
+
+    /// <summary>How to remove this item via its own uninstaller / package manager. Null for plain folders.</summary>
+    public CommandSpec? UninstallCommand { get; init; }
+
+    /// <summary>Optional homepage / repository web URL (GitHub page, publisher site).</summary>
+    public string? WebUrl { get; init; }
+}
+
+/// <summary>Snapshot of a repository's git state.</summary>
+public sealed record GitInfo
+{
+    public string? RemoteUrl { get; init; }
+    public string? Branch { get; init; }
+    public bool HasUpstream { get; init; }
+    public int Ahead { get; init; }
+    public int Behind { get; init; }
+    public int ModifiedFiles { get; init; }
+    public int UntrackedFiles { get; init; }
+    public int Stashes { get; init; }
+    public DateTimeOffset? LastCommitAt { get; init; }
+    public string? LastCommitSubject { get; init; }
+
+    /// <summary>True when deleting the folder would lose work that exists nowhere else.</summary>
+    public bool HasUnsavedWork => ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || (!HasUpstream && LastCommitAt is not null);
+}
+
+/// <summary>A regenerable directory inside a project.</summary>
+public sealed record ArtifactDir(string Path, string Kind, long SizeBytes);
+
+/// <summary>Builds stable ids. Paths are normalised (full path, lower-case, no trailing separator).</summary>
+public static class ItemIds
+{
+    public static string ForPath(string path) =>
+        "path:" + System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(path)).ToLowerInvariant();
+
+    public static string ForSource(string source, string key) => $"{source}:{key.ToLowerInvariant()}";
+}

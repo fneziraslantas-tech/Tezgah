@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+    <Version>0.1.0</Version>
+    <Authors>Tezgah contributors</Authors>
+    <Product>Tezgah</Product>
+    <Copyright>Copyright © 2026 Tezgah contributors</Copyright>
+    <!-- CA1303: literal strings are fine (localization handled in UI resources). CA1848: LoggerMessage not required here. -->
+    <NoWarn>$(NoWarn);CA1303;CA1848;CA2254</NoWarn>
+  </PropertyGroup>
+</Project>
+
