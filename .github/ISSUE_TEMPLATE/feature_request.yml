@@ -1,0 +1,52 @@
+name: "Öneri / Feature request"
+description: "Yeni bir özellik ya da iyileştirme öner. / Suggest a new feature or an improvement."
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Türkçe ya da İngilizce yazabilirsin. Büyük değişiklikler için önce burada yaklaşımı konuşalım.
+        You can write in Turkish or English. For larger changes, let's agree on the approach here first.
+  - type: input
+    id: version
+    attributes:
+      label: "Tezgah sürümü / Tezgah version"
+      description: "F1 → Hakkında / About"
+      placeholder: "0.1.1"
+    validations:
+      required: false
+  - type: input
+    id: windows
+    attributes:
+      label: "Windows sürümü / Windows version"
+      placeholder: "Windows 11 24H2 (26100)"
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Sorun ya da ihtiyaç / Problem or need"
+      description: "Neyi yapamıyorsun ya da neyi zor buluyorsun? / What can't you do, or what is hard today?"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Önerilen çözüm / Proposed solution"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Düşünülen alternatifler / Alternatives considered"
+    validations:
+      required: false
+  - type: textarea
+    id: safety
+    attributes:
+      label: "Güvenlik etkisi / Safety impact"
+      description: |
+        Öneri kod çalıştırma, URL/klasör açma ya da dosya silmeyi etkiliyor mu?
+        Does the proposal affect running code, opening URLs/folders or deleting files?
+    validations:
+      required: false

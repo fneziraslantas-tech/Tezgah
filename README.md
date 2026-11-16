@@ -48,7 +48,12 @@ Tezgah, geliştiricinin Windows bilgisayarını tarayan açık kaynak bir masaü
 
 ```powershell
 gh attestation verify Tezgah-vX.Y.Z-win-x64.zip --repo fneziraslantas-tech/Tezgah
+(Get-FileHash Tezgah-vX.Y.Z-win-x64.zip -Algorithm SHA256).Hash -eq (Get-Content Tezgah-vX.Y.Z-win-x64.zip.sha256).Trim()
 ```
+
+> **Windows SmartScreen uyarısı:** `Tezgah.exe` kod imzalı değildir; ilk çalıştırmada SmartScreen "Windows bilgisayarınızı korudu" diyebilir. Önce yukarıdaki SHA-256 ve attestation doğrulamasını yap, ardından **Ek bilgi** → **Yine de çalıştır**'a bas.
+
+Sürümler arası değişiklikler: [CHANGELOG.md](CHANGELOG.md).
 
 ### Kaynaktan derleme
 
@@ -84,6 +89,15 @@ Taranan her repo **güvenilmeyen girdi** sayılır. Özetle:
 - Her kaldırma işlemi önce ve sonra `%LOCALAPPDATA%\Tezgah\audit.log` dosyasına yazılır; kayıt yazılamazsa hiçbir şey silinmez.
 
 Tehdit modeli ve açık bildirme yolu: **[SECURITY.md](SECURITY.md)**.
+
+### Güvenlik denetimi
+
+İlk herkese açık sürümden (v0.1.1) önce iki denetim yapıldı:
+
+- **İç çekişmeli denetim** — birden çok ajanla, 3 tur; her bulgu bir regresyon testiyle birlikte düzeltildi.
+- **Dış yöntemle denetim** — [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill), tam denetim, `standard` profil: 0 doğrulanmış bulgu, 8 doğrulama bekleyen sınır hipotezi (hepsi #5–#9 ile düzeltildi), 2 reddedilen kayıt. Hedef kod yalıtılmış ortam olmadığı için çalıştırılamadı; "0 doğrulanmış" bu çalıştırmanın sonucudur, açık olmadığının kanıtı değildir.
+
+Yöntem, kapsam, sınırlar ve bulgu-PR eşlemesi: [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md).
 
 ## Mimari
 
@@ -127,7 +141,7 @@ flowchart LR
 dotnet test
 ```
 
-~600 test: ayrıştırıcılar, PathGuard ve silme kuralları, cmd argüman koruması, git sertleştirmesi, katalog birleştirme, view-model'ler, kaynak anahtarı eşliği, her diyaloğun gerçek kaynaklarla çizimi ve gerçek çekirdek üzerinde geçici klasörlerde koşan uçtan uca senaryolar (tarama → güven → çalıştır → durdur → kaldır). CI her push ve PR'da Release derlemesi (uyarılar hata sayılır, analizörler açık), testler, NuGet açık denetimi, gitleaks ve CodeQL çalıştırır.
+~760 test: ayrıştırıcılar, PathGuard ve silme kuralları, cmd argüman koruması, git sertleştirmesi, katalog birleştirme, view-model'ler, kaynak anahtarı eşliği, her diyaloğun gerçek kaynaklarla çizimi ve gerçek çekirdek üzerinde geçici klasörlerde koşan uçtan uca senaryolar (tarama → güven → çalıştır → durdur → kaldır). CI her push ve PR'da Release derlemesi (uyarılar hata sayılır, analizörler açık), testler, NuGet açık denetimi, gitleaks ve CodeQL çalıştırır.
 
 ## Katkı
 
@@ -162,6 +176,10 @@ Tezgah ("workbench" in Turkish) is an open-source Windows desktop app that scans
 
 **Release:** download `Tezgah-vX.Y.Z-win-x64.zip` from [Releases](https://github.com/fneziraslantas-tech/Tezgah/releases), unzip, run `Tezgah.exe` (self-contained, no .NET install needed). Each zip ships with a SHA-256 file and a GitHub build provenance attestation (`gh attestation verify <zip> --repo fneziraslantas-tech/Tezgah`).
 
+> **Windows SmartScreen:** `Tezgah.exe` is not code-signed, so SmartScreen may show "Windows protected your PC" on first run. Verify the SHA-256 (`(Get-FileHash <zip> -Algorithm SHA256).Hash` against the `.sha256` file) and the attestation first, then choose **More info** → **Run anyway**.
+
+Changes between releases: [CHANGELOG.md](CHANGELOG.md).
+
 **From source:** Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and git.
 
 ```powershell
@@ -188,13 +206,22 @@ Press `F1` (About) for all shortcuts and a short overview.
 
 Every scanned repo is treated as **untrusted input**: its code never runs until you trust the folder (trust is bound to the folder's identity); commands start without a shell and batch targets only receive cmd-inert characters (BatBadBut); every deletion goes through one path guard (system folders, links and network paths refused, re-checked right before deleting) and goes to the Recycle Bin by default; every removal is written to `%LOCALAPPDATA%\Tezgah\audit.log` before and after — no audit record, no deletion. Threat model and how to report a vulnerability: **[SECURITY.md](SECURITY.md)**.
 
+### Security audit
+
+Two audits ran before the first public release (v0.1.1):
+
+- **Internal adversarial audit** — multi-agent, 3 rounds; every finding was fixed together with a regression test.
+- **External-method audit** — [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill), full audit, `standard` profile: 0 confirmed findings, 8 boundary hypotheses needing validation (all fixed in #5–#9), 2 rejected records. Target code could not be executed because no isolated sandbox was available, so "0 confirmed" is a property of that run, not proof that no vulnerability exists.
+
+Method, scope, limits and the finding-to-PR mapping: [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md).
+
 ### Architecture
 
 `Tezgah.Core` (UI-independent: Model, Abstractions, Discovery, Catalog, Execution, Safety, Uninstall, Interop) and `Tezgah.App` (WPF, MVVM with CommunityToolkit.Mvvm, Fluent theme). Layers only talk through the contracts in `Abstractions`; the core registers itself with `services.AddTezgahCore()` (one partial file per layer), `App.ConfigureServices` adds the WPF services and swaps in demo fakes for `--demo`. View-models never touch WPF types: windows, dialogs and shell actions sit behind `IDialogService`, `IShellService` and `IUiDispatcher`. See the diagram above.
 
 ### Tests
 
-`dotnet test` runs ~600 tests: parsers, PathGuard and deletion rules, cmd argument guard, git hardening, catalog merging, view-models, resource key parity, rendering of every dialog with the real resources, and end-to-end scenarios over the real composed core in temporary folders (scan → trust → run → stop → remove). CI runs a Release build (warnings as errors, analyzers on), the tests, NuGet vulnerability audit, gitleaks and CodeQL on every push and PR.
+`dotnet test` runs ~760 tests: parsers, PathGuard and deletion rules, cmd argument guard, git hardening, catalog merging, view-models, resource key parity, rendering of every dialog with the real resources, and end-to-end scenarios over the real composed core in temporary folders (scan → trust → run → stop → remove). CI runs a Release build (warnings as errors, analyzers on), the tests, NuGet vulnerability audit, gitleaks and CodeQL on every push and PR.
 
 ### Contributing
 
