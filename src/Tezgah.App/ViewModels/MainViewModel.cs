@@ -659,9 +659,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task<bool> AskTrustAsync(ItemViewModel item, RunProfile profile)
+    private Task<bool> AskTrustAsync(ItemViewModel item, RunProfile profile) => AskTrustAsync(item, profile.Command.Display);
+
+    /// <summary>
+    /// Workspace-trust prompt for anything that executes the folder's code or honours its repository config
+    /// (runs, but also git pull/fetch, which run hooks, filters and core.sshCommand).
+    /// </summary>
+    private async Task<bool> AskTrustAsync(ItemViewModel item, string commandLine)
     {
-        var prompt = new TrustPrompt(item.Name, item.Path, item.Git?.RemoteUrl ?? item.Item.WebUrl, profile.Command.Display);
+        var meta = _catalog.GetMeta(item.Id);
+        var claimed = item.Git?.RemoteUrl ?? item.Item.WebUrl;
+        var verified = meta.ClonedFrom is { } cloned && (claimed is null || string.Equals(cloned, claimed, StringComparison.OrdinalIgnoreCase));
+        var prompt = new TrustPrompt(item.Name, item.Path, verified ? meta.ClonedFrom : claimed, commandLine, verified);
         if (!_dialogs.ConfirmTrust(prompt))
         {
             return false;
@@ -843,6 +852,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // git pull runs the repository's hooks, filters and transport settings: same trust gate as running its code.
+        if (!item.IsTrusted && !await AskTrustAsync(item, "git pull --ff-only"))
+        {
+            return;
+        }
+
         item.IsBusy = true;
         try
         {
@@ -881,7 +896,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         item.IsBusy = true;
         try
         {
-            await _catalog.RefreshItemAsync(item.Id, fetchGit: item.HasGit, CancellationToken.None);
+            // Untrusted repositories are refreshed locally only: git fetch honours repository-controlled commands.
+            await _catalog.RefreshItemAsync(item.Id, fetchGit: item.HasGit && item.IsTrusted, CancellationToken.None);
         }
         catch (Exception ex)
         {

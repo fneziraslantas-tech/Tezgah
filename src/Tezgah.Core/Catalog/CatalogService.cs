@@ -136,7 +136,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             {
                 foreach (var old in previous.Items.Where(i => i.Source == Sources.FileSystem && !fsFound.Contains(i.Id) && i.Path is not null))
                 {
-                    var again = await _inspector.InspectAsync(old.Path!, fetchGit: false, force: true, computeSize: false, ct).ConfigureAwait(false);
+                    var again = await _inspector.InspectAsync(old.Path!, fetchGit: false, force: true, computeSize: false, ct, skipCloudGit: true).ConfigureAwait(false);
                     if (again is not null)
                     {
                         keptFs.Add(again with { SizeBytes = old.SizeBytes });
@@ -147,7 +147,8 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             UpdateState(s =>
             {
                 var merged = Merge(s, results, failed.ToHashSet(StringComparer.Ordinal), keptFs);
-                return s with { Items = merged, LastScanAt = DateTimeOffset.Now };
+                var fsRanOk = fsFound is not null && !failed.Contains(Sources.FileSystem);
+                return s with { Items = merged, Meta = ReconcileTrust(merged, s.Meta, pruneMissingPaths: fsRanOk), LastScanAt = DateTimeOffset.Now };
             });
             await PersistAsync(ct).ConfigureAwait(false);
             progress?.Report(new ScanProgress("done", null, State.Items.Count));
@@ -197,6 +198,51 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         return byId.Values.Select(i => WithMetaActivity(i, previous.Meta)).OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
+    /// <summary>
+    /// Identity of a filesystem item used to bind workspace trust to the folder that was actually trusted: its creation
+    /// time. A folder deleted and re-created (clone, unzip, copy) at the same path gets a new one.
+    /// </summary>
+    internal static string TrustAnchorOf(CatalogItem item) =>
+        item.InstalledAt is { } created ? created.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unknown";
+
+    /// <summary>
+    /// Revokes trust (never touches favorites, tags or notes) for filesystem items whose identity no longer matches the
+    /// trusted one and, when <paramref name="pruneMissingPaths"/>, for path ids that no longer have an item.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, UserMeta> ReconcileTrust(
+        IReadOnlyList<CatalogItem> items, IReadOnlyDictionary<string, UserMeta> meta, bool pruneMissingPaths)
+    {
+        Dictionary<string, UserMeta>? changed = null;
+        var byId = items.ToDictionary(i => i.Id, StringComparer.Ordinal);
+        foreach (var (id, m) in meta)
+        {
+            if (m is null || !m.Trusted)
+            {
+                continue;
+            }
+
+            bool revoke;
+            if (byId.TryGetValue(id, out var item))
+            {
+                revoke = item.Source == Sources.FileSystem && m.TrustAnchor != TrustAnchorOf(item);
+            }
+            else
+            {
+                revoke = pruneMissingPaths && id.StartsWith("path:", StringComparison.Ordinal);
+            }
+
+            if (revoke)
+            {
+                changed ??= new Dictionary<string, UserMeta>(meta, StringComparer.Ordinal);
+                changed[id] = RevokedTrust(m);
+            }
+        }
+
+        return changed ?? meta;
+    }
+
+    private static UserMeta RevokedTrust(UserMeta m) => m with { Trusted = false, TrustAnchor = null, ClonedFrom = null };
+
     private static CatalogItem WithMetaActivity(CatalogItem item, IReadOnlyDictionary<string, UserMeta> meta)
     {
         if (meta.TryGetValue(item.Id, out var m) && m.LastRunAt is { } run && (item.LastActivity is null || run > item.LastActivity))
@@ -232,6 +278,12 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             return;
         }
 
+        if (fetchGit && !GetMeta(itemId).Trusted)
+        {
+            // git fetch honours repository settings (core.sshCommand, credential helpers...): never for untrusted code.
+            fetchGit = false;
+        }
+
         CatalogItem? fresh;
         if (existing.Source == Sources.FileSystem && existing.Path is not null)
         {
@@ -257,7 +309,13 @@ internal sealed class CatalogService : ICatalogService, IDisposable
                 items.Add(WithMetaActivity(fresh, s.Meta));
             }
 
-            return s with { Items = items.OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList() };
+            var meta = s.Meta;
+            if (fresh is null && existing.Source == Sources.FileSystem && meta.TryGetValue(itemId, out var gone) && gone is { Trusted: true })
+            {
+                meta = new Dictionary<string, UserMeta>(meta, StringComparer.Ordinal) { [itemId] = RevokedTrust(gone) };
+            }
+
+            return s with { Items = items.OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList(), Meta = ReconcileTrust(items, meta, pruneMissingPaths: false) };
         });
         await PersistAsync(ct).ConfigureAwait(false);
     }
@@ -270,8 +328,18 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         UpdateState(s =>
         {
             var meta = new Dictionary<string, UserMeta>(s.Meta, StringComparer.Ordinal);
-            var current = meta.TryGetValue(itemId, out var m) ? m : new UserMeta();
+            var current = meta.TryGetValue(itemId, out var m) && m is not null ? m : new UserMeta();
             var updated = update(current);
+            if (updated.Trusted && (!current.Trusted || updated.TrustAnchor is null) && s.Items.FirstOrDefault(i => i.Id == itemId) is { } trustedItem)
+            {
+                // Bind the trust decision to the folder identity the user just saw.
+                updated = updated with { TrustAnchor = TrustAnchorOf(trustedItem) };
+            }
+            else if (!updated.Trusted)
+            {
+                updated = updated with { TrustAnchor = null };
+            }
+
             meta[itemId] = updated;
             var items = s.Items.Select(i => i.Id == itemId ? WithMetaActivity(i, meta) : i).ToList();
             return s with { Meta = meta, Items = items };
@@ -327,9 +395,17 @@ internal sealed class CatalogService : ICatalogService, IDisposable
 
         UpdateState(s =>
         {
+            var wasLive = s.Items.Any(i => i.Id == item.Id);
             var items = s.Items.Where(i => i.Id != item.Id).ToList();
             items.Add(WithMetaActivity(item, s.Meta));
-            return s with { Items = items.OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList() };
+            var meta = s.Meta;
+            if (!wasLive && meta.TryGetValue(item.Id, out var stale) && stale is not null && (stale.Trusted || stale.ClonedFrom is not null))
+            {
+                // A folder that (re)appears at a path never inherits trust recorded for whatever was there before.
+                meta = new Dictionary<string, UserMeta>(meta, StringComparer.Ordinal) { [item.Id] = RevokedTrust(stale) };
+            }
+
+            return s with { Items = items.OrderBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList(), Meta = ReconcileTrust(items, meta, pruneMissingPaths: false) };
         });
         await PersistAsync(ct).ConfigureAwait(false);
         return item;
@@ -364,7 +440,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never", "-c", "protocol.fd.allow=never",
             "clone", "--progress", "--", url, target,
         ];
-        var result = await Cli.RunAsync("git", args, parent, CloneTimeout, ct, GitClient.GitEnvironment, line => progress?.Report(line)).ConfigureAwait(false);
+        var result = await Cli.RunAsync("git", args, Environment.SystemDirectory, CloneTimeout, ct, GitClient.BuildEnvironment(target, []), line => progress?.Report(line)).ConfigureAwait(false);
         if (!result.Success)
         {
             var message = result.TimedOut ? L.T("git clone zaman aşımına uğradı.", "git clone timed out.") : result.StdErr.Trim();
@@ -372,19 +448,31 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             throw new InvalidOperationException(message.Length > 0 ? message : L.T("git clone başarısız oldu.", "git clone failed."));
         }
 
-        return await AddFolderAsync(target, ct).ConfigureAwait(false);
+        // A fresh clone must always go through the trust prompt, whatever was recorded for this path before.
+        var targetId = ItemIds.ForPath(target);
+        UpdateState(s => s.Meta.TryGetValue(targetId, out var old) && old is not null
+            ? s with { Meta = new Dictionary<string, UserMeta>(s.Meta, StringComparer.Ordinal) { [targetId] = RevokedTrust(old) } }
+            : s);
+        var added = await AddFolderAsync(target, ct).ConfigureAwait(false);
+        if (added is not null)
+        {
+            var clonedFrom = GitUrls.Sanitize(url) ?? url;
+            await UpdateMetaAsync(added.Id, m => m with { Trusted = false, TrustAnchor = null, ClonedFrom = clonedFrom }, ct).ConfigureAwait(false);
+        }
+
+        return added;
     }
 
     public UserMeta GetMeta(string itemId) =>
-        State.Meta.TryGetValue(itemId, out var m) ? m : new UserMeta();
+        State.Meta.GetValueOrDefault(itemId) ?? new UserMeta();
 
     public IReadOnlyList<RunProfile> GetProfiles(string itemId)
     {
         var state = State;
         var item = state.Items.FirstOrDefault(i => i.Id == itemId);
-        var meta = state.Meta.TryGetValue(itemId, out var m) ? m : new UserMeta();
+        var meta = state.Meta.GetValueOrDefault(itemId) ?? new UserMeta();
         var detected = item?.RunProfiles ?? [];
-        var custom = meta.CustomProfiles.Select(p => p.Origin.Length == 0 ? p with { Origin = "user" } : p);
+        var custom = (meta.CustomProfiles ?? []).Where(p => p is not null).Select(p => p.Origin.Length == 0 ? p with { Origin = "user" } : p);
         var all = detected.Concat(custom).DistinctBy(p => p.Id).ToList();
         if (meta.DefaultProfileId is { } wanted && all.Any(p => p.Id == wanted))
         {

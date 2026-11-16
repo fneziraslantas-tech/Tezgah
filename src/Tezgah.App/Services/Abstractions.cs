@@ -23,8 +23,12 @@ public interface IUiDispatcher
     IDisposable StartTimer(TimeSpan interval, Action tick);
 }
 
-/// <summary>What the trust dialog shows before a folder's code is executed for the first time.</summary>
-public sealed record TrustPrompt(string ItemName, string? Path, string? Remote, string CommandLine);
+/// <summary>
+/// What the trust dialog shows before a folder's code is executed for the first time. <paramref name="RemoteVerified"/> is
+/// true only when Tezgah cloned the folder from <paramref name="Remote"/> itself; otherwise the remote is whatever the
+/// folder's own <c>.git/config</c> claims and is shown as unverified.
+/// </summary>
+public sealed record TrustPrompt(string ItemName, string? Path, string? Remote, string CommandLine, bool RemoteVerified = false);
 
 /// <summary>All modal UI. View-models never show windows or message boxes directly.</summary>
 public interface IDialogService

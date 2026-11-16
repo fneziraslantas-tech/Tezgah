@@ -1,0 +1,131 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Tezgah.Core.Abstractions;
+using Tezgah.Core.Catalog;
+using Tezgah.Core.Model;
+using Tezgah.Core.Tests.Discovery;
+
+namespace Tezgah.Core.Tests.Catalog;
+
+/// <summary>Workspace trust is bound to the folder that was trusted, never to a path that later holds different code.</summary>
+public sealed class CatalogTrustTests : IDisposable
+{
+    private readonly TempDir _dir = new();
+
+    public void Dispose() => _dir.Dispose();
+
+    private sealed class EmptyFsProvider : IDiscoveryProvider
+    {
+        public string Id => Sources.FileSystem;
+
+        public Task<bool> IsAvailableAsync(CancellationToken ct) => Task.FromResult(true);
+
+        public Task<IReadOnlyList<CatalogItem>> DiscoverAsync(TezgahSettings settings, IProgress<ScanProgress>? progress, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<CatalogItem>>([]);
+    }
+
+    internal sealed class FetchRecordingGit : IGitClient
+    {
+        public List<bool> Fetches { get; } = [];
+
+        public Task<bool> IsAvailableAsync(CancellationToken ct) => Task.FromResult(true);
+
+        public Task<GitInfo?> GetInfoAsync(string repoPath, bool fetch, CancellationToken ct)
+        {
+            Fetches.Add(fetch);
+            return Task.FromResult<GitInfo?>(new GitInfo { Branch = "main" });
+        }
+
+        public Task<CommandResult> PullAsync(string repoPath, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private CatalogService NewService(IGitClient? git = null) =>
+        new([new EmptyFsProvider()], new CatalogStore(Path.Combine(_dir.Path, "c.json")), git ?? new FetchRecordingGit(),
+            DetectorTests.NewInspector(git ?? new FetchRecordingGit()), NullLogger<CatalogService>.Instance);
+
+    private string Project(string name)
+    {
+        var p = _dir.Sub(name);
+        File.WriteAllText(Path.Combine(p, "go.mod"), "module m");
+        return p;
+    }
+
+    [Fact]
+    public async Task Deleted_then_recreated_folder_does_not_inherit_trust()
+    {
+        using var svc = NewService();
+        var path = Project("app");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true, Favorite = true }, CancellationToken.None);
+        Assert.True(svc.GetMeta(item.Id).Trusted);
+
+        Directory.Delete(path, true);
+        await svc.ScanAsync(null, CancellationToken.None);
+        Assert.False(svc.GetMeta(item.Id).Trusted);
+        Assert.True(svc.GetMeta(item.Id).Favorite); // user data other than trust is kept
+
+        Project("app");
+        var again = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        Assert.Equal(item.Id, again.Id);
+        Assert.False(svc.GetMeta(item.Id).Trusted);
+    }
+
+    [Fact]
+    public async Task Stale_meta_never_trusts_a_newly_added_folder()
+    {
+        using var svc = NewService();
+        var path = Project("other");
+        var id = ItemIds.ForPath(path);
+        await svc.UpdateMetaAsync(id, m => m with { Trusted = true }, CancellationToken.None); // orphaned trust, no item yet
+
+        await svc.AddFolderAsync(path, CancellationToken.None);
+
+        Assert.False(svc.GetMeta(id).Trusted);
+    }
+
+    [Fact]
+    public async Task Folder_replaced_while_untracked_loses_trust_on_rescan()
+    {
+        using var svc = NewService();
+        var path = Project("swap");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        await svc.ScanAsync(null, CancellationToken.None);
+        Assert.True(svc.GetMeta(item.Id).Trusted); // same folder: trust survives a rescan
+
+        Directory.SetCreationTimeUtc(path, DateTime.UtcNow.AddDays(-3)); // a different folder now lives at the path
+        await svc.ScanAsync(null, CancellationToken.None);
+
+        Assert.False(svc.GetMeta(item.Id).Trusted);
+    }
+
+    [Fact]
+    public async Task Refresh_of_deleted_folder_revokes_trust()
+    {
+        using var svc = NewService();
+        var path = Project("gone");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        Directory.Delete(path, true);
+
+        await svc.RefreshItemAsync(item.Id, fetchGit: false, CancellationToken.None);
+
+        Assert.False(svc.GetMeta(item.Id).Trusted);
+    }
+
+    [Fact]
+    public async Task Refresh_never_fetches_for_untrusted_repositories()
+    {
+        var git = new FetchRecordingGit();
+        using var svc = NewService(git);
+        var path = _dir.Sub("repo");
+        _dir.Sub("repo", ".git");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        git.Fetches.Clear();
+
+        await svc.RefreshItemAsync(item.Id, fetchGit: true, CancellationToken.None);
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        await svc.RefreshItemAsync(item.Id, fetchGit: true, CancellationToken.None);
+
+        Assert.Equal([false, true], git.Fetches);
+    }
+}

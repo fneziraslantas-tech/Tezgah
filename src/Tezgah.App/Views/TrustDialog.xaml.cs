@@ -13,7 +13,9 @@ public partial class TrustDialog : Window
         InitializeComponent();
         NameText.Text = prompt.ItemName;
         PathText.Text = prompt.Path ?? "—";
-        RemoteText.Text = prompt.Remote ?? strings.Text("Trust_UnknownSource");
+        RemoteText.Text = prompt.Remote is null
+            ? strings.Text("Trust_UnknownSource")
+            : prompt.Remote + "  " + strings.Text(prompt.RemoteVerified ? "Trust_SourceCloned" : "Trust_SourceUnverified");
         CommandText.Text = prompt.CommandLine;
     }
 

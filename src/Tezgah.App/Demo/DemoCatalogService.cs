@@ -195,7 +195,14 @@ public sealed class DemoCatalogService : ICatalogService
             RunProfiles = DemoData.NodeProfiles(path, "dev"),
             Git = new GitInfo { RemoteUrl = gitUrl, Branch = "main", HasUpstream = true, LastCommitAt = DateTimeOffset.Now.AddDays(-1), LastCommitSubject = "Initial commit" },
         };
-        Mutate(s => s with { Items = [.. s.Items.Where(i => i.Id != item.Id), item] });
+        Mutate(s =>
+        {
+            var meta = new Dictionary<string, UserMeta>(s.Meta)
+            {
+                [item.Id] = (s.Meta.GetValueOrDefault(item.Id) ?? new UserMeta()) with { Trusted = false, ClonedFrom = gitUrl },
+            };
+            return s with { Items = [.. s.Items.Where(i => i.Id != item.Id), item], Meta = meta };
+        });
         return item;
     }
 

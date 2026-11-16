@@ -132,11 +132,13 @@
 
     <!-- güven -->
     <sys:String x:Key="Trust_Title">Bu koda güveniyor musun?</sys:String>
-    <sys:String x:Key="Trust_Message">Bu klasördeki kod bilgisayarında çalıştırılacak. Kaynağa güveniyor musun?</sys:String>
+    <sys:String x:Key="Trust_Message">Bu klasördeki kod bilgisayarında çalıştırılacak. Bu koda ve geldiği yere güveniyor musun?</sys:String>
     <sys:String x:Key="Trust_Item">Öğe</sys:String>
     <sys:String x:Key="Trust_Source">Kaynak</sys:String>
     <sys:String x:Key="Trust_Command">Komut</sys:String>
     <sys:String x:Key="Trust_UnknownSource">bilinmiyor (uzak adres yok)</sys:String>
+    <sys:String x:Key="Trust_SourceUnverified">(bu klasörde kayıtlı, doğrulanmadı: herkes değiştirebilir)</sys:String>
+    <sys:String x:Key="Trust_SourceCloned">(Tezgah tarafından klonlandı)</sys:String>
     <sys:String x:Key="Trust_Footnote">Bir kez onayladığında bu klasör "güvenilir" olarak işaretlenir ve bir daha sorulmaz.</sys:String>
     <sys:String x:Key="Trust_Confirm">Güven ve çalıştır</sys:String>
     <sys:String x:Key="Trust_Cancel">Vazgeç</sys:String>

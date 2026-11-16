@@ -132,11 +132,13 @@
 
     <!-- trust -->
     <sys:String x:Key="Trust_Title">Do you trust this code?</sys:String>
-    <sys:String x:Key="Trust_Message">The code in this folder will run on your computer. Do you trust its source?</sys:String>
+    <sys:String x:Key="Trust_Message">The code in this folder will run on your computer. Do you trust this code and where it came from?</sys:String>
     <sys:String x:Key="Trust_Item">Item</sys:String>
     <sys:String x:Key="Trust_Source">Source</sys:String>
     <sys:String x:Key="Trust_Command">Command</sys:String>
     <sys:String x:Key="Trust_UnknownSource">unknown (no remote)</sys:String>
+    <sys:String x:Key="Trust_SourceUnverified">(recorded in this folder, not verified: anyone can set this)</sys:String>
+    <sys:String x:Key="Trust_SourceCloned">(cloned by Tezgah)</sys:String>
     <sys:String x:Key="Trust_Footnote">Once you confirm, this folder is marked as trusted and you won't be asked again.</sys:String>
     <sys:String x:Key="Trust_Confirm">Trust and run</sys:String>
     <sys:String x:Key="Trust_Cancel">Cancel</sys:String>

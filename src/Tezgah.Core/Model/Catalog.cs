@@ -11,6 +11,15 @@ public sealed record UserMeta
     /// <summary>User confirmed they trust this folder's code to be executed (workspace-trust model).</summary>
     public bool Trusted { get; init; }
 
+    /// <summary>
+    /// Identity of the folder that was trusted (see <c>CatalogService.TrustAnchorOf</c>). Trust is revoked when the folder at
+    /// the same path no longer has this identity (deleted and replaced by different code).
+    /// </summary>
+    public string? TrustAnchor { get; init; }
+
+    /// <summary>URL the folder was cloned from by Tezgah itself (the only remote the trust prompt can call verified).</summary>
+    public string? ClonedFrom { get; init; }
+
     public DateTimeOffset? LastRunAt { get; init; }
 
     /// <summary>Profile id the user picked as default; overrides detector default.</summary>
