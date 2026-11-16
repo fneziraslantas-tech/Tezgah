@@ -150,7 +150,7 @@ internal sealed partial class PythonDetector : IProjectDetector
         var module = Path.GetFileNameWithoutExtension(entry);
         var id = "py:" + module.ToLowerInvariant();
 
-        if (StreamlitImport().IsMatch(source))
+        if (ImportsStreamlit(source))
         {
             return FsUtil.Profile(id, $"streamlit run {entry}", RunProfileKind.Run, ProjectType,
                 python.Spec(directory, "-m", "streamlit", "run", entry), isDefault);
@@ -260,10 +260,17 @@ internal sealed partial class PythonDetector : IProjectDetector
         var pyproject = FsUtil.ReadText(Path.Combine(directory, "pyproject.toml"));
         if (pyproject is not null)
         {
-            var m = TomlDescription().Match(pyproject);
-            if (m.Success)
+            try
             {
-                return m.Groups["d"].Value.Trim();
+                var m = TomlDescription().Match(pyproject);
+                if (m.Success)
+                {
+                    return m.Groups["d"].Value.Trim();
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // pathological manifest: treat as "no description"
             }
         }
 
@@ -280,8 +287,22 @@ internal sealed partial class PythonDetector : IProjectDetector
         return null;
     }
 
-    [GeneratedRegex(@"^\s*(import\s+streamlit|from\s+streamlit\s+import)", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
-    private static partial Regex StreamlitImport();
+    private static bool ImportsStreamlit(string source)
+    {
+        try
+        {
+            return StreamlitImport().IsMatch(source);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    // Indentation is [ \t]*, not \s*: under Multiline a leading \s* also consumes newlines, so every line start re-scans
+    // the rest of the input and newline-only files become quadratic (256K '\n' took ~30 s). Same for TomlDescription.
+    [GeneratedRegex(@"^[ \t]*(import\s+streamlit|from\s+streamlit\s+import)", RegexOptions.Multiline | RegexOptions.CultureInvariant, 250)]
+    internal static partial Regex StreamlitImport();
 
     [GeneratedRegex(@"^(?<var>[A-Za-z_]\w*)\s*=\s*(?:fastapi\.)?FastAPI\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex FastApiApp();
@@ -289,8 +310,8 @@ internal sealed partial class PythonDetector : IProjectDetector
     [GeneratedRegex(@"^(?<var>[A-Za-z_]\w*)\s*=\s*(?:flask\.)?Flask\(", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex FlaskApp();
 
-    [GeneratedRegex(@"^\s*description\s*=\s*[""'](?<d>[^""'\r\n]+)[""']", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
-    private static partial Regex TomlDescription();
+    [GeneratedRegex(@"^[ \t]*description\s*=\s*[""'](?<d>[^""'\r\n]+)[""']", RegexOptions.Multiline | RegexOptions.CultureInvariant, 250)]
+    internal static partial Regex TomlDescription();
 
     [GeneratedRegex(@"\bdescription\s*=\s*[""'](?<d>[^""'\r\n]+)[""']", RegexOptions.CultureInvariant)]
     private static partial Regex SetupDescription();
