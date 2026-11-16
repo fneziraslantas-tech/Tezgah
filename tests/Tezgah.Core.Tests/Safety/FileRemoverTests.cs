@@ -20,6 +20,45 @@ public class FileRemoverTests
     }
 
     [Fact]
+    public async Task Recycles_git_like_folder_with_read_only_objects()
+    {
+        using var dir = new TempDir();
+        var repo = dir.Sub("recycle-repo");
+        var objectFile = Path.Combine(dir.Sub("recycle-repo", ".git", "objects", "ab"), "cdef");
+        File.WriteAllText(objectFile, "blob");
+        File.SetAttributes(objectFile, FileAttributes.ReadOnly);
+
+        await _remover.RemoveDirectoryAsync(repo, toRecycleBin: true, CancellationToken.None);
+
+        Assert.False(Directory.Exists(repo));
+    }
+
+    [Fact]
+    public void ClearReadOnly_clears_flags_but_not_through_junctions()
+    {
+        using var dir = new TempDir();
+        var outside = dir.Sub("outside-ro");
+        var sentinel = Path.Combine(outside, "sentinel.txt");
+        File.WriteAllText(sentinel, "keep read-only");
+        File.SetAttributes(sentinel, FileAttributes.ReadOnly);
+
+        var root = dir.Sub("ro-root");
+        var inner = Path.Combine(dir.Sub("ro-root", "sub"), "f.txt");
+        File.WriteAllText(inner, "x");
+        File.SetAttributes(inner, FileAttributes.ReadOnly);
+        var junctionCreated = Junction.TryCreate(Path.Combine(root, "link"), outside);
+
+        Assert.True(FileRemover.ClearReadOnly(root) >= 1);
+        Assert.False(File.GetAttributes(inner).HasFlag(FileAttributes.ReadOnly));
+        if (junctionCreated)
+        {
+            Assert.True(File.GetAttributes(sentinel).HasFlag(FileAttributes.ReadOnly), "followed a junction");
+        }
+
+        File.SetAttributes(sentinel, FileAttributes.Normal);
+    }
+
+    [Fact]
     public async Task Permanent_delete_handles_read_only_files_and_does_not_follow_junctions()
     {
         using var dir = new TempDir();

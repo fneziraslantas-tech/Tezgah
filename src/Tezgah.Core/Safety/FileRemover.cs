@@ -110,11 +110,74 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
     {
         // Final re-check right before the shell call, on the thread that performs it.
         Validate(full, policy);
-        Win32.MoveToRecycleBin(full);
+        try
+        {
+            Win32.MoveToRecycleBin(full);
+        }
+        catch (IOException) when (Directory.Exists(full) && ClearReadOnly(full) > 0)
+        {
+            // Some Windows editions (e.g. Server SKUs) refuse to recycle read-only files with DE_ACCESSDENIEDSRC;
+            // git object files are read-only. The folder is about to go anyway, so drop the flag and try once more.
+            Validate(full, policy);
+            Win32.MoveToRecycleBin(full);
+        }
+
         if (Path.Exists(full))
         {
             throw new IOException(L.T($"Silinemedi (bazı dosyalar kullanımda olabilir): {full}", $"Could not remove (some files may be in use): {full}"));
         }
+    }
+
+    /// <summary>
+    /// Clears the read-only attribute on every file and folder under <paramref name="root"/> without descending into
+    /// links. Returns how many entries were changed.
+    /// </summary>
+    internal static int ClearReadOnly(string root)
+    {
+        var changed = 0;
+        var pending = new Stack<DirectoryInfo>();
+        pending.Push(new DirectoryInfo(root));
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+            IEnumerable<FileSystemInfo> entries;
+            try
+            {
+                entries = dir.EnumerateFileSystemInfos("*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }).ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            foreach (var entry in entries)
+            {
+                if (IsLinkLike(entry))
+                {
+                    continue;
+                }
+
+                if ((entry.Attributes & FileAttributes.ReadOnly) != 0)
+                {
+                    try
+                    {
+                        entry.Attributes &= ~FileAttributes.ReadOnly;
+                        changed++;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // best effort
+                    }
+                }
+
+                if (entry is DirectoryInfo sub)
+                {
+                    pending.Push(sub);
+                }
+            }
+        }
+
+        return changed;
     }
 
     /// <summary>
