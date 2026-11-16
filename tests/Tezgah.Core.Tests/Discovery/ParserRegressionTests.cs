@@ -16,10 +16,14 @@ public sealed class ParserRegressionTests : IDisposable
     {
         var links = string.Join(' ', Enumerable.Range(0, 30).Select(i => $"[Link{i}](https://example.com/p{i})"));
         var readme = "# T\n\n" + links + " and more text here.\n\nReal description.\n";
+
+        // Warm up JIT and regex construction so the measurement is the parse itself (coverage instrumentation on CI
+        // makes the first call slow). Exponential backtracking takes minutes, so 2 s still separates linear from not.
+        ReadmeParser.ExtractDescription("# warm\n\n[a](b) text\n");
         var sw = Stopwatch.StartNew();
         var task = Task.Run(() => ReadmeParser.ExtractDescription(readme));
-        await task.WaitAsync(TimeSpan.FromSeconds(5)); // throws TimeoutException when it hangs
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(1), $"took {sw.Elapsed}");
+        await task.WaitAsync(TimeSpan.FromSeconds(10)); // throws TimeoutException when it hangs
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"took {sw.Elapsed}");
     }
 
     [Theory]
