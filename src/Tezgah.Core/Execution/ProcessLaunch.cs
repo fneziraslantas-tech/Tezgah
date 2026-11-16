@@ -18,9 +18,17 @@ internal static class ProcessLaunch
     /// <item>Fully qualified → used as-is (PATHEXT applied when it has no extension).</item>
     /// <item>Contains a separator ("./gradlew.bat", "venv\Scripts\python") → resolved against <paramref name="workingDirectory"/>.</item>
     /// <item>Bare name → searched in absolute PATH entries only. Unlike CreateProcess we do NOT look in the current or
-    /// working directory first, so a repository cannot shadow "git" or "node" with a planted git.exe/node.exe.</item>
+    /// working directory first, so a repository cannot shadow the program Tezgah itself starts.</item>
     /// </list>
     /// Only .exe/.com/.cmd/.bat results are returned.
+    /// <para>
+    /// This covers the first hop only. When the result is a batch shim (npm.cmd, yarn.cmd, pnpm.cmd...), cmd.exe runs it
+    /// with the project as current directory and resolves bare names inside it (e.g. "node" when node.exe is not next to
+    /// the shim) from that directory first. Tool and uninstaller commands (<see cref="CommandExecutor"/>) and discovery
+    /// queries therefore set <c>NoDefaultCurrentDirectoryInExePath=1</c>. Runs of trusted projects do not: the variable is
+    /// inherited by the whole tree and would break scripts that call local helpers (gradlew, run.bat) by bare name; the
+    /// user already trusted that project's code.
+    /// </para>
     /// </summary>
     public static string? Resolve(string name, string? workingDirectory, IReadOnlyDictionary<string, string>? environment = null)
     {
