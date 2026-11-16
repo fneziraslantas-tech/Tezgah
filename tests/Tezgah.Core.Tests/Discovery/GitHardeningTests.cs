@@ -126,6 +126,8 @@ public sealed class GitHardeningTests : IDisposable
         var wt = _dir.Sub("wt");
         File.WriteAllText(Path.Combine(wt, ".git"), "gitdir: ../main/.git/worktrees/wt\n");
         File.WriteAllText(Path.Combine(real, "commondir"), "../..\n");
+        File.WriteAllText(Path.Combine(real, "HEAD"), "ref: refs/heads/wt\n");
+        File.WriteAllText(Path.Combine(_dir.Path, "main", ".git", "HEAD"), "ref: refs/heads/main\n");
         Assert.True(GitRepoGuard.TryResolveLocalGitDir(wt, out var gitDir, out _));
         Assert.Equal(Path.GetFullPath(real), gitDir);
     }
@@ -141,8 +143,15 @@ public sealed class GitHardeningTests : IDisposable
         File.WriteAllText(Path.Combine(i, "config"), "[core]\n\tbare = false\n[includeIf \"gitdir:~/\"]\n\tpath = //host/share/x.cfg\n");
         Assert.False(GitRepoGuard.TryResolveLocalGitDir(_dir.Sub("inc"), out _, out _));
 
+        // Strict: even a local include is refused (git would read config the guard never parsed).
+        var local = _dir.Sub("localinc", ".git");
+        File.WriteAllText(Path.Combine(local, "HEAD"), "ref: refs/heads/main\n");
+        File.WriteAllText(Path.Combine(local, "config"), "[include]\n\tpath = local.cfg\n");
+        Assert.False(GitRepoGuard.TryResolveLocalGitDir(_dir.Sub("localinc"), out _, out _));
+
         var ok = _dir.Sub("ok", ".git");
-        File.WriteAllText(Path.Combine(ok, "config"), "[include]\n\tpath = local.cfg\n");
+        File.WriteAllText(Path.Combine(ok, "HEAD"), "ref: refs/heads/main\n");
+        File.WriteAllText(Path.Combine(ok, "config"), "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://example.com/x.git\n");
         Assert.True(GitRepoGuard.TryResolveLocalGitDir(_dir.Sub("ok"), out _, out _));
     }
 
@@ -157,6 +166,20 @@ public sealed class GitHardeningTests : IDisposable
         Assert.Contains(("protocol.ext.allow", "never"), pairs);
         Assert.Contains(("filter.x.clean", string.Empty), pairs);
         Assert.Contains(("filter.x.process", string.Empty), pairs);
+        Assert.Contains(("log.showSignature", "false"), pairs);
+        Assert.Contains(("gpg.program", GitClient.DisabledProgram), pairs);
+        Assert.Contains(("gpg.ssh.program", GitClient.DisabledProgram), pairs);
+        Assert.Contains(("gpg.x509.program", GitClient.DisabledProgram), pairs);
+        Assert.Contains(("diff.ignoreSubmodules", "all"), pairs);
+        Assert.Contains(("credential.helper", string.Empty), pairs);
+        Assert.Contains(("core.sshCommand", string.Empty), pairs);
+        Assert.False(File.Exists(GitClient.DisabledProgram));
+
+        // Network calls (trusted fetch/pull/clone) keep the user's credential setup.
+        var net = GitClient.BuildEnvironment(@"C:\src\repo", [], network: true);
+        var netPairs = Enumerable.Range(0, int.Parse(net["GIT_CONFIG_COUNT"], System.Globalization.CultureInfo.InvariantCulture)).Select(i => net[$"GIT_CONFIG_KEY_{i}"]).ToList();
+        Assert.DoesNotContain("credential.helper", netPairs);
+        Assert.Contains("log.showSignature", netPairs);
         Assert.Equal(@"C:\src", env["GIT_CEILING_DIRECTORIES"]);
 
         var args = GitClient.BuildArguments(@"C:\src\repo", ["status"]);

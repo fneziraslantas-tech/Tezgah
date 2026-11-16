@@ -572,6 +572,13 @@ internal sealed partial class UninstallService(
                     $"the upstream of branch '{info.Branch ?? "?"}' was deleted"));
             }
 
+            if (info.StatusUnknown)
+            {
+                parts.Add(L.T(
+                    "çalışma ağacındaki değişiklikler denetlenemedi (git bu depoda güvenle çalıştırılamadı)",
+                    "changes in the working tree could not be checked (git could not be run safely on this repository)"));
+            }
+
             if (info.UnpushedCommits is null)
             {
                 parts.Add(L.T("diğer dallarda gönderilmemiş commit olup olmadığı doğrulanamadı", "could not rule out unpushed commits on other branches"));

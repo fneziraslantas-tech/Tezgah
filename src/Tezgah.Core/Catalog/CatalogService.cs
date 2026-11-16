@@ -162,6 +162,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
                 var fsRanOk = fsFound is not null && !failed.Contains(Sources.FileSystem);
                 return s with { Items = merged, Meta = ReconcileTrust(merged, s.Meta, pruneMissingPaths: fsRanOk), LastScanAt = DateTimeOffset.Now };
             });
+            await RefreshTrustedGitAsync(ct).ConfigureAwait(false);
             await PersistAsync(ct).ConfigureAwait(false);
             progress?.Report(new ScanProgress("done", null, State.Items.Count));
         }
@@ -170,6 +171,45 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             Interlocked.Exchange(ref _scanning, 0);
             _scanGate.Release();
             OnChanged();
+        }
+    }
+
+    /// <summary>
+    /// Scans read git metadata without running git. For the (few) repositories the user trusted, the full state — working
+    /// tree included — is then read with the hardened git CLI. Items changed meanwhile are left alone.
+    /// </summary>
+    private async Task RefreshTrustedGitAsync(CancellationToken ct)
+    {
+        var state = State;
+        var candidates = state.Items
+            .Where(i => i.Kind == ItemKind.GitRepository && i.Source == Sources.FileSystem && i.Path is not null && i.Git is { StatusUnknown: true }
+                && IsTrustValid(i, state.Meta.GetValueOrDefault(i.Id)) && !ProjectInspector.IsCloudBackedRepo(i.Path))
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            return;
+        }
+
+        var fresh = new Dictionary<CatalogItem, GitInfo>(ReferenceEqualityComparer.Instance);
+        foreach (var item in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (await _git.GetInfoAsync(item.Path!, fetch: false, ct).ConfigureAwait(false) is { } info)
+                {
+                    fresh[item] = info;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogInformation(ex, "Reading git state of trusted repository {Path} failed", item.Path);
+            }
+        }
+
+        if (fresh.Count > 0)
+        {
+            UpdateState(s => s with { Items = s.Items.Select(i => fresh.TryGetValue(i, out var g) ? i with { Git = g } : i).ToList() });
         }
     }
 
@@ -386,7 +426,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         CatalogItem? fresh;
         if (existing.Source == Sources.FileSystem && existing.Path is not null)
         {
-            fresh = await _inspector.InspectAsync(existing.Path, fetchGit, force: true, computeSize: true, ct).ConfigureAwait(false);
+            fresh = await _inspector.InspectAsync(existing.Path, fetchGit, force: true, computeSize: true, ct, runGit: IsTrusted(itemId)).ConfigureAwait(false);
         }
         else
         {
@@ -510,7 +550,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             return null;
         }
 
-        var item = await _inspector.InspectAsync(full, fetchGit: false, force: true, computeSize: true, ct).ConfigureAwait(false);
+        var item = await _inspector.InspectAsync(full, fetchGit: false, force: true, computeSize: true, ct, runGit: IsTrusted(ItemIds.ForPath(full))).ConfigureAwait(false);
         if (item is null)
         {
             return null;
@@ -564,7 +604,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never", "-c", "protocol.fd.allow=never",
             "clone", "--progress", "--", url, target,
         ];
-        var result = await Cli.RunAsync("git", args, Environment.SystemDirectory, CloneTimeout, ct, GitClient.BuildEnvironment(target, []), line => progress?.Report(line)).ConfigureAwait(false);
+        var result = await Cli.RunAsync("git", args, Environment.SystemDirectory, CloneTimeout, ct, GitClient.BuildEnvironment(target, [], network: true), line => progress?.Report(line)).ConfigureAwait(false);
         if (!result.Success)
         {
             var message = result.TimedOut ? L.T("git clone zaman aşımına uğradı.", "git clone timed out.") : result.StdErr.Trim();

@@ -186,6 +186,7 @@ public sealed class CatalogTrustTests : IDisposable
         await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
         await svc.RefreshItemAsync(item.Id, fetchGit: true, CancellationToken.None);
 
-        Assert.Equal([false, true], git.Fetches);
+        // Untrusted: git is not run at all (metadata is read without it); trusted: the CLI runs and may fetch.
+        Assert.Equal([true], git.Fetches);
     }
 }

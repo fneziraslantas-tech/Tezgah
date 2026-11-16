@@ -11,9 +11,14 @@ namespace Tezgah.Core.Discovery;
 /// </summary>
 /// <remarks>
 /// Scanned repositories are untrusted input: their own <c>.git/config</c> can name programs git runs during read-only
-/// commands (<c>core.fsmonitor</c>, filter drivers, hooks, external diff...). Every invocation therefore
+/// commands (<c>core.fsmonitor</c>, filter drivers, hooks, external diff, <c>gpg.program</c> with <c>log.showSignature</c>,
+/// submodule configs...). Background scans of untrusted repositories therefore never get here
+/// (<see cref="ProjectInspector"/> uses <see cref="GitMetadataReader"/>); this client serves trusted items and
+/// user-initiated uninstall planning/cleanup. Every invocation
 /// <list type="bullet">
-/// <item>passes <see cref="GitRepoGuard"/> first (no git process for repositories whose git data is not on a local drive);</item>
+/// <item>passes the strict <see cref="GitRepoGuard.TryResolveLocalGitDir"/> first; a repository it cannot positively
+/// validate gets no git process at all and <see cref="GetInfoAsync"/> falls back to the metadata reader (state unknown,
+/// counted as unsaved work);</item>
 /// <item>carries command-scope config overrides through <c>GIT_CONFIG_COUNT</c>/<c>GIT_CONFIG_KEY_n</c>/<c>GIT_CONFIG_VALUE_n</c>
 /// (same precedence as <c>-c</c>, beats repository config and includes, inherited by child git processes);</item>
 /// <item>for read-only calls also neutralises every filter driver defined in the repository config;</item>
@@ -57,7 +62,42 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         new("submodule.recurse", "false"),
         new("fetch.recurseSubmodules", "false"),
         new("safe.bareRepository", "explicit"),
+
+        // Signature verification runs gpg.program / gpg.ssh.program / gpg.x509.program (repository-controlled) during
+        // "git log" when log.showSignature is set: never verify, and point every program at a file that cannot exist.
+        new("log.showSignature", "false"),
+        new("gpg.program", DisabledProgram),
+        new("gpg.openpgp.program", DisabledProgram),
+        new("gpg.ssh.program", DisabledProgram),
+        new("gpg.x509.program", DisabledProgram),
+        new("gpg.ssh.defaultKeyCommand", string.Empty),
+
+        // Submodules are separate repositories with their own config (filters, fsmonitor...): never descend into them.
+        new("status.submoduleSummary", "false"),
+        new("diff.ignoreSubmodules", "all"),
+        new("log.mailmap", "false"),
+        new("mailmap.file", string.Empty),
+        new("mailmap.blob", string.Empty),
+        new("core.alternateRefsCommand", string.Empty),
     ];
+
+    /// <summary>
+    /// Extra overrides for calls that never need the network: no ssh command and no credential helper can be started.
+    /// Fetch/pull/clone (trusted items only) keep the user's credential setup.
+    /// </summary>
+    internal static readonly IReadOnlyList<KeyValuePair<string, string>> LocalOnlyConfig =
+    [
+        new("core.sshCommand", string.Empty),
+        new("credential.helper", string.Empty),
+    ];
+
+    /// <summary>A program path that cannot exist (System32 is not writable without elevation).</summary>
+    internal static string DisabledProgram => Path.Combine(Environment.SystemDirectory, "tezgah-disabled-program.exe");
+
+    private int _processesStarted;
+
+    /// <summary>git processes this instance started (tests assert that untrusted paths start none).</summary>
+    internal int ProcessesStarted => Volatile.Read(ref _processesStarted);
 
     /// <summary>Neutral process working directory: the repository is selected with <c>-C</c>, never via the CWD.</summary>
     private static string NeutralDirectory => Environment.SystemDirectory;
@@ -73,22 +113,24 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
     public async Task<GitInfo?> GetInfoAsync(string repoPath, bool fetch, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoPath);
-        if (!await IsAvailableAsync(ct).ConfigureAwait(false))
-        {
-            return null;
-        }
-
         if (!GitRepoGuard.TryResolveLocalGitDir(repoPath, out _, out var refused))
         {
-            logger.LogWarning("git details skipped for {Path}: {Reason}", repoPath, refused);
-            return null;
+            // Not positively validated: no git process at all. The managed reader reports what it can and marks the rest
+            // unknown, which counts as unsaved work (fail closed).
+            logger.LogWarning("git not run for {Path}: {Reason}; reading metadata only.", repoPath, refused);
+            return GitMetadataReader.Read(repoPath);
+        }
+
+        if (!await IsAvailableAsync(ct).ConfigureAwait(false))
+        {
+            return GitMetadataReader.Read(repoPath);
         }
 
         var filters = await ReadFilterDriversAsync(repoPath, ct).ConfigureAwait(false);
         if (filters is null)
         {
-            logger.LogInformation("git config could not be read for {Path}; git details skipped.", repoPath);
-            return null;
+            logger.LogInformation("git config could not be read for {Path}; reading metadata only.", repoPath);
+            return GitMetadataReader.Read(repoPath);
         }
 
         Task<CommandResult> RunGitAsync(TimeSpan timeout, CancellationToken token, params string[] args) =>
@@ -96,18 +138,18 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
 
         if (fetch)
         {
-            var f = await RunHardenedAsync(repoPath, NetworkTimeout, [], ct, "fetch", "--quiet", "--prune").ConfigureAwait(false);
+            var f = await RunHardenedAsync(repoPath, NetworkTimeout, [], true, ct, "fetch", "--quiet", "--prune", "--no-recurse-submodules").ConfigureAwait(false);
             if (!f.Success)
             {
                 logger.LogInformation("git fetch failed for {Path}: {Error}", repoPath, FirstLine(f.StdErr));
             }
         }
 
-        var status = await RunGitAsync(LocalTimeout, ct, "status", "--porcelain=v2", "--branch", "--show-stash", "--untracked-files=normal").ConfigureAwait(false);
+        var status = await RunGitAsync(LocalTimeout, ct, "status", "--porcelain=v2", "--branch", "--show-stash", "--untracked-files=normal", "--ignore-submodules=all").ConfigureAwait(false);
         if (!status.Success && status.StdErr.Contains("unknown option", StringComparison.OrdinalIgnoreCase))
         {
             // very old git without --show-stash
-            status = await RunGitAsync(LocalTimeout, ct, "status", "--porcelain=v2", "--branch", "--untracked-files=normal").ConfigureAwait(false);
+            status = await RunGitAsync(LocalTimeout, ct, "status", "--porcelain=v2", "--branch", "--untracked-files=normal", "--ignore-submodules=all").ConfigureAwait(false);
         }
 
         if (!status.Success)
@@ -128,8 +170,8 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         var stashes = parsed.Stashes;
         if (stashes is null)
         {
-            var stash = await RunGitAsync(LocalTimeout, ct, "stash", "list").ConfigureAwait(false);
-            stashes = stash.Success ? stash.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length : 0;
+            // "git stash list" is a reflog walk that may verify signatures: count the stash reflog ourselves.
+            stashes = GitMetadataReader.Read(repoPath)?.Stashes ?? 0;
         }
 
         DateTimeOffset? lastCommitAt = null;
@@ -147,7 +189,7 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
                 unpushedBranches = refs.Success ? ParseUnpushedBranches(refs.StdOut) : [];
             }
 
-            var log = await RunGitAsync(LocalTimeout, ct, "log", "-1", "--format=%cI%x00%s").ConfigureAwait(false);
+            var log = await RunGitAsync(LocalTimeout, ct, "log", "-1", "--no-show-signature", "--no-mailmap", "--format=%cI%x00%s").ConfigureAwait(false);
             if (log.Success)
             {
                 (lastCommitAt, subject) = ParseLog(log.StdOut);
@@ -199,11 +241,11 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         ArgumentException.ThrowIfNullOrEmpty(repoPath);
         if (!GitRepoGuard.TryResolveLocalGitDir(repoPath, out _, out var refused))
         {
-            return new CommandResult(-1, string.Empty, refused ?? "Refused: repository is not on a local drive.", false);
+            return new CommandResult(-1, string.Empty, "Refused: " + (refused ?? "the repository could not be validated."), false);
         }
 
         // Filters are not neutralised here: a pull of a trusted repository may legitimately need e.g. git-lfs smudge.
-        return await RunHardenedAsync(repoPath, PullTimeout, [], ct, "pull", "--ff-only").ConfigureAwait(false);
+        return await RunHardenedAsync(repoPath, PullTimeout, [], true, ct, "pull", "--ff-only", "--no-recurse-submodules").ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<string>> GetIgnoredPathsAsync(string repoPath, CancellationToken ct)
@@ -220,7 +262,7 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
             return [];
         }
 
-        var r = await RunHardenedAsync(repoPath, LocalTimeout, filters, ct, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z").ConfigureAwait(false);
+        var r = await RunHardenedAsync(repoPath, LocalTimeout, filters, false, ct, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z").ConfigureAwait(false);
         return r.Success ? r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries).Take(5_000).ToList() : [];
     }
 
@@ -240,7 +282,7 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         }
 
         var dir = relativeDirectory.Replace('\\', '/').TrimEnd('/') + "/";
-        var tracked = await RunHardenedAsync(repoPath, LocalTimeout, filters, ct, "ls-files", "-z", "--", dir).ConfigureAwait(false);
+        var tracked = await RunHardenedAsync(repoPath, LocalTimeout, filters, false, ct, "ls-files", "-z", "--", dir).ConfigureAwait(false);
         if (!tracked.Success)
         {
             return null;
@@ -251,7 +293,7 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
             return true;
         }
 
-        var status = await RunHardenedAsync(repoPath, LocalTimeout, filters, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", dir).ConfigureAwait(false);
+        var status = await RunHardenedAsync(repoPath, LocalTimeout, filters, false, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all", "--", dir).ConfigureAwait(false);
         return status.Success ? status.StdOut.Length > 0 : null;
     }
 
@@ -316,9 +358,9 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         stderr.Contains("safe.directory", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Names of the filter drivers configured for the repository (any scope), or null when config cannot be read.</summary>
-    private static async Task<IReadOnlyList<string>?> ReadFilterDriversAsync(string repoPath, CancellationToken ct)
+    private async Task<IReadOnlyList<string>?> ReadFilterDriversAsync(string repoPath, CancellationToken ct)
     {
-        var r = await RunHardenedAsync(repoPath, LocalTimeout, [], ct, "config", "--null", "--name-only", "--get-regexp", @"^filter\.").ConfigureAwait(false);
+        var r = await RunHardenedAsync(repoPath, LocalTimeout, [], false, ct, "config", "--null", "--name-only", "--get-regexp", @"^filter\.").ConfigureAwait(false);
         if (r.ExitCode == 1 && r.StdOut.Length == 0)
         {
             return []; // no filter.* keys at all
@@ -358,10 +400,15 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
     /// Environment for one git invocation: <see cref="GitEnvironment"/> plus the hardening config (and, for read-only
     /// calls, overrides that disable every listed filter driver) as GIT_CONFIG_COUNT pairs.
     /// </summary>
-    internal static Dictionary<string, string> BuildEnvironment(string repoPath, IReadOnlyList<string> filterDrivers)
+    internal static Dictionary<string, string> BuildEnvironment(string repoPath, IReadOnlyList<string> filterDrivers, bool network = false)
     {
         var env = new Dictionary<string, string>(GitEnvironment, StringComparer.OrdinalIgnoreCase);
         var config = new List<KeyValuePair<string, string>>(HardeningConfig);
+        if (!network)
+        {
+            config.AddRange(LocalOnlyConfig);
+        }
+
         foreach (var name in filterDrivers)
         {
             config.Add(new($"filter.{name}.clean", string.Empty));
@@ -394,8 +441,14 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         return all;
     }
 
-    private static Task<CommandResult> RunHardenedAsync(string repoPath, TimeSpan timeout, IReadOnlyList<string> filterDrivers, CancellationToken ct, params string[] args) =>
-        Cli.RunAsync("git", BuildArguments(repoPath, args), NeutralDirectory, timeout, ct, BuildEnvironment(repoPath, filterDrivers));
+    private Task<CommandResult> RunHardenedAsync(string repoPath, TimeSpan timeout, IReadOnlyList<string> filterDrivers, CancellationToken ct, params string[] args) =>
+        RunHardenedAsync(repoPath, timeout, filterDrivers, false, ct, args);
+
+    private Task<CommandResult> RunHardenedAsync(string repoPath, TimeSpan timeout, IReadOnlyList<string> filterDrivers, bool network, CancellationToken ct, params string[] args)
+    {
+        Interlocked.Increment(ref _processesStarted);
+        return Cli.RunAsync("git", BuildArguments(repoPath, args), NeutralDirectory, timeout, ct, BuildEnvironment(repoPath, filterDrivers, network));
+    }
 
     private static string FirstLine(string s) => s.Split('\n', 2)[0].Trim();
 }

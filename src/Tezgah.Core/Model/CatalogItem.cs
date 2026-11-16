@@ -110,10 +110,19 @@ public sealed record GitInfo
     /// <summary>Linked worktrees of this (main) repository; deleting it breaks them.</summary>
     public IReadOnlyList<string> LinkedWorktrees { get; init; } = [];
 
-    /// <summary>True when deleting the folder would lose work that exists nowhere else.</summary>
-    public bool HasUnsavedWork =>
+    /// <summary>
+    /// The working tree was not inspected (git was not run: untrusted repository or one that could not be validated for
+    /// the git CLI), so <see cref="ModifiedFiles"/>/<see cref="UntrackedFiles"/> are not known. Counts as unsaved work.
+    /// </summary>
+    public bool StatusUnknown { get; init; }
+
+    /// <summary>Unsaved work that was actually observed (for display; deletion safety uses <see cref="HasUnsavedWork"/>).</summary>
+    public bool HasKnownUnsavedWork =>
         ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || ((!HasUpstream || UpstreamGone) && LastCommitAt is not null) ||
-        UnpushedCommits is null or > 0 || LinkedWorktrees.Count > 0;
+        UnpushedCommits > 0 || LinkedWorktrees.Count > 0;
+
+    /// <summary>True when deleting the folder would (or, with unknown state, might) lose work that exists nowhere else.</summary>
+    public bool HasUnsavedWork => HasKnownUnsavedWork || UnpushedCommits is null || StatusUnknown;
 }
 
 /// <summary>

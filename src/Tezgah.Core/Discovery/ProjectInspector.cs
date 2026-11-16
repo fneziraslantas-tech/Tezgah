@@ -147,8 +147,14 @@ internal sealed class ProjectInspector
     /// recognised project, unless <paramref name="force"/> (user picked the folder explicitly).
     /// <paramref name="skipCloudGit"/> (background scans) skips git for repositories whose git data is an online-only
     /// cloud placeholder: <c>git status</c> would make OneDrive download the whole object store and working tree.
+    /// <para>
+    /// <paramref name="runGit"/> is true only for repositories the user trusted: then the git CLI (hardened, see
+    /// <see cref="GitClient"/>) reads the full state, and <paramref name="fetchGit"/> may fetch. Otherwise no git process is
+    /// started at all — repository config can name programs git runs even for read-only commands — and
+    /// <see cref="GitMetadataReader"/> reads what it can directly from the git directory (working tree state unknown).
+    /// </para>
     /// </summary>
-    public async Task<CatalogItem?> InspectAsync(string directory, bool fetchGit, bool force, bool computeSize, CancellationToken ct, bool skipCloudGit = false)
+    public async Task<CatalogItem?> InspectAsync(string directory, bool fetchGit, bool force, bool computeSize, CancellationToken ct, bool skipCloudGit = false, bool runGit = false)
     {
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         if (!Directory.Exists(full))
@@ -167,6 +173,10 @@ internal sealed class ProjectInspector
         if (isGit && skipCloudGit && IsCloudBackedRepo(full))
         {
             _logger.LogInformation("Online-only (cloud) repository {Path}: git details skipped during scan", full);
+        }
+        else if (isGit && !runGit)
+        {
+            git = await Task.Run(() => GitMetadataReader.Read(full), ct).ConfigureAwait(false);
         }
         else if (isGit)
         {

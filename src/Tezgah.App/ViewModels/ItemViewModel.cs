@@ -92,11 +92,12 @@ public sealed partial class ItemViewModel : ObservableObject
 
     public GitInfo? Git => Item.Git;
 
-    public bool HasUnsavedWork => Item.Git?.HasUnsavedWork == true;
+    /// <summary>Observed unsaved work only: untrusted repositories are read without git, so their working tree is unknown.</summary>
+    public bool HasUnsavedWork => Item.Git?.HasKnownUnsavedWork == true;
 
     public bool IsDirty => Item.Git is { } g && (g.ModifiedFiles > 0 || g.UntrackedFiles > 0 || g.Stashes > 0);
 
-    public bool IsUnpushed => Item.Git is { } g && (g.Ahead > 0 || g.UnpushedCommits is null or > 0 || ((!g.HasUpstream || g.UpstreamGone) && g.LastCommitAt is not null));
+    public bool IsUnpushed => Item.Git is { } g && (g.Ahead > 0 || g.UnpushedCommits > 0 || (g.UnpushedCommits is null && !g.StatusUnknown) || ((!g.HasUpstream || g.UpstreamGone) && g.LastCommitAt is not null));
 
     public string AttentionText
     {
