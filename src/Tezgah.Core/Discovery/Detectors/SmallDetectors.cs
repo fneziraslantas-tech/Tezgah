@@ -27,12 +27,25 @@ internal sealed partial class RustDetector : IProjectDetector
         profiles.Add(FsUtil.Profile("cargo:build", "cargo build --release", RunProfileKind.Build, ProjectType, FsUtil.Spec("cargo", directory, "build", "--release")));
         profiles.Add(FsUtil.Profile("cargo:test", "cargo test", RunProfileKind.Test, ProjectType, FsUtil.Spec("cargo", directory, "test")));
 
-        var m = Description().Match(cargoToml);
-        return new ProjectDetection(ProjectType, profiles, FsUtil.Artifacts(directory, "rust", "target"), m.Success ? m.Groups["d"].Value.Trim() : null);
+        return new ProjectDetection(ProjectType, profiles, FsUtil.Artifacts(directory, "rust", "target"), ReadDescription(cargoToml));
     }
 
-    [GeneratedRegex(@"^\s*description\s*=\s*""(?<d>[^""\r\n]+)""", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
-    private static partial Regex Description();
+    private static string? ReadDescription(string cargoToml)
+    {
+        try
+        {
+            var m = Description().Match(cargoToml);
+            return m.Success ? m.Groups["d"].Value.Trim() : null;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return null;
+        }
+    }
+
+    // [ \t]*, not \s*: a Multiline ^\s* crosses newlines and is quadratic on newline-only input.
+    [GeneratedRegex(@"^[ \t]*description\s*=\s*""(?<d>[^""\r\n]+)""", RegexOptions.Multiline | RegexOptions.CultureInvariant, 250)]
+    internal static partial Regex Description();
 }
 
 /// <summary>Go modules.</summary>
@@ -70,10 +83,23 @@ internal sealed partial class GoDetector : IProjectDetector
     }
 
     private static bool HasMainPackage(string dir) =>
-        FsUtil.TopLevelFiles(dir, "*.go").Take(50).Any(f => MainPackage().IsMatch(FsUtil.ReadHead(f, 8192) ?? string.Empty));
+        FsUtil.TopLevelFiles(dir, "*.go").Take(50).Any(f => IsMainPackage(FsUtil.ReadHead(f, 8192) ?? string.Empty));
 
-    [GeneratedRegex(@"^\s*package\s+main\b", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
-    private static partial Regex MainPackage();
+    private static bool IsMainPackage(string source)
+    {
+        try
+        {
+            return MainPackage().IsMatch(source);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    // [ \t]*, not \s*: a Multiline ^\s* crosses newlines and is quadratic on newline-only input.
+    [GeneratedRegex(@"^[ \t]*package\s+main\b", RegexOptions.Multiline | RegexOptions.CultureInvariant, 250)]
+    internal static partial Regex MainPackage();
 }
 
 /// <summary>Maven and Gradle projects. Wrapper scripts (mvnw.cmd / gradlew.bat) are preferred when present.</summary>
@@ -217,10 +243,10 @@ internal static partial class GradleBuild
     [GeneratedRegex(@"//[^\n]*|/\*.*?\*/", RegexOptions.Singleline | RegexOptions.CultureInvariant, 250)]
     private static partial Regex Comments();
 
-    [GeneratedRegex(@"(?m)^\s*android\s*\{", RegexOptions.CultureInvariant, 250)]
-    private static partial Regex AndroidBlock();
+    [GeneratedRegex(@"(?m)^[ \t]*android\s*\{", RegexOptions.CultureInvariant, 250)]
+    internal static partial Regex AndroidBlock();
 
     // id 'application' / id("application") / apply plugin: 'application' / bare `application` in plugins { } / application { } block
-    [GeneratedRegex(@"\bid\s*\(?\s*[""']application[""']|apply\s+plugin\s*:\s*[""']application[""']|plugins\s*\{[^}]*?(?<![\w.\-""'])application(?![\w.\-""'])|(?m)^\s*application\s*\{", RegexOptions.CultureInvariant, 250)]
-    private static partial Regex ApplicationPlugin();
+    [GeneratedRegex(@"\bid\s*\(?\s*[""']application[""']|apply\s+plugin\s*:\s*[""']application[""']|plugins\s*\{[^}]*?(?<![\w.\-""'])application(?![\w.\-""'])|(?m)^[ \t]*application\s*\{", RegexOptions.CultureInvariant, 250)]
+    internal static partial Regex ApplicationPlugin();
 }
