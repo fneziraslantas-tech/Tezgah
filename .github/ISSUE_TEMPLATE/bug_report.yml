@@ -1,0 +1,61 @@
+name: "Hata bildirimi / Bug report"
+description: "Tezgah'ta beklenmeyen bir davranış bildir. / Report something that does not work as expected."
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Güvenlik açıklarını burada bildirme.** [Security](https://github.com/fneziraslantas-tech/Tezgah/security/advisories/new) sekmesini kullan.
+        **Do not report vulnerabilities here.** Use the [Security](https://github.com/fneziraslantas-tech/Tezgah/security/advisories/new) tab.
+
+        Türkçe ya da İngilizce yazabilirsin. / You can write in Turkish or English.
+  - type: input
+    id: version
+    attributes:
+      label: "Tezgah sürümü / Tezgah version"
+      description: "İndirdiğin zip adı ya da sürüm etiketi (ör. Tezgah-v0.1.1-win-x64.zip). v0.1.1'in Hakkında penceresi yanlışlıkla 0.1.0 gösterir. / The zip file name or release tag you downloaded (e.g. Tezgah-v0.1.1-win-x64.zip). The v0.1.1 About dialog wrongly shows 0.1.0."
+      placeholder: "v0.1.1"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: "Windows sürümü / Windows version"
+      description: "winver"
+      placeholder: "Windows 11 24H2 (26100)"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Yeniden üretme adımları / Steps to reproduce"
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Beklenen davranış / Expected behaviour"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Gerçekleşen davranış / Actual behaviour"
+      description: "Varsa ekran görüntüsü ekle. / Add a screenshot if helpful."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Günlük / Logs"
+      description: |
+        `%LOCALAPPDATA%\Tezgah\logs` (F1 → Günlük klasörünü aç / Open log folder).
+        Paylaşmadan önce kişisel yolları, kullanıcı adlarını, token ve parolaları sil.
+        Remove personal paths, user names, tokens and passwords before sharing.
+      render: text
+    validations:
+      required: false
