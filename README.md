@@ -95,7 +95,7 @@ Tehdit modeli ve açık bildirme yolu: **[SECURITY.md](SECURITY.md)**.
 İlk herkese açık sürümden (v0.1.1) önce iki denetim yapıldı:
 
 - **İç çekişmeli denetim** — birden çok ajanla, 3 tur; her bulgu bir regresyon testiyle birlikte düzeltildi.
-- **Dış yöntemle denetim** — [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill), tam denetim, `standard` profil: 0 doğrulanmış bulgu, 8 doğrulama bekleyen sınır hipotezi (hepsi #5–#9 ile düzeltildi), 2 reddedilen kayıt. Hedef kod yalıtılmış ortam olmadığı için çalıştırılamadı; "0 doğrulanmış" bu çalıştırmanın sonucudur, açık olmadığının kanıtı değildir.
+- **Dış yöntemle denetim** — [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill), tam denetim, `standard` profil: 0 doğrulanmış bulgu, 8 doğrulama bekleyen sınır hipotezi (hepsi [#5](https://github.com/fneziraslantas-tech/Tezgah/pull/5), [#6](https://github.com/fneziraslantas-tech/Tezgah/pull/6), [#8](https://github.com/fneziraslantas-tech/Tezgah/pull/8) ve [#9](https://github.com/fneziraslantas-tech/Tezgah/pull/9) ile düzeltildi), 2 reddedilen kayıt. Hedef kod yalıtılmış ortam olmadığı için çalıştırılamadı; "0 doğrulanmış" bu çalıştırmanın sonucudur, açık olmadığının kanıtı değildir.
 
 Yöntem, kapsam, sınırlar ve bulgu-PR eşlemesi: [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md).
 
@@ -211,7 +211,7 @@ Every scanned repo is treated as **untrusted input**: its code never runs until 
 Two audits ran before the first public release (v0.1.1):
 
 - **Internal adversarial audit** — multi-agent, 3 rounds; every finding was fixed together with a regression test.
-- **External-method audit** — [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill), full audit, `standard` profile: 0 confirmed findings, 8 boundary hypotheses needing validation (all fixed in #5–#9), 2 rejected records. Target code could not be executed because no isolated sandbox was available, so "0 confirmed" is a property of that run, not proof that no vulnerability exists.
+- **External-method audit** — [cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill), full audit, `standard` profile: 0 confirmed findings, 8 boundary hypotheses needing validation (all fixed in [#5](https://github.com/fneziraslantas-tech/Tezgah/pull/5), [#6](https://github.com/fneziraslantas-tech/Tezgah/pull/6), [#8](https://github.com/fneziraslantas-tech/Tezgah/pull/8) and [#9](https://github.com/fneziraslantas-tech/Tezgah/pull/9)), 2 rejected records. Target code could not be executed because no isolated sandbox was available, so "0 confirmed" is a property of that run, not proof that no vulnerability exists.
 
 Method, scope, limits and the finding-to-PR mapping: [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md).
 

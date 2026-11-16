@@ -15,6 +15,11 @@ file and a GitHub build provenance attestation. The executable is not code-signe
 
 > `v0.1.0` was tagged, but its release build failed and nothing was published. `0.1.1` is the first release.
 
+### Known issues
+
+- The About dialog (F1) of the v0.1.1 build shows version `0.1.0`: the project version was not bumped for this
+  release. The build is v0.1.1; check the zip file name or the release tag.
+
 ### Added
 
 - Scanning of git repositories and project folders (Node, Python, .NET, Rust, Go, Java, Docker, static web, scripts),
@@ -36,27 +41,27 @@ file and a GitHub build provenance attestation. The executable is not code-signe
   See [SECURITY.md](SECURITY.md).
 - Fixes for all 8 leads that the external-method audit
   ([docs/security-audit-2026-11.md](docs/security-audit-2026-11.md)) left as `needs_validation`:
-  - Permanent delete descends by handle, so a junction swapped in during the delete cannot redirect it (#5).
-  - Multiline project-detector regexes are linear and time-bounded, so a crafted manifest cannot stall a scan (#6).
+  - Permanent delete descends by handle, so a junction swapped in during the delete cannot redirect it ([#5](https://github.com/fneziraslantas-tech/Tezgah/pull/5)).
+  - Multiline project-detector regexes are linear and time-bounded, so a crafted manifest cannot stall a scan ([#6](https://github.com/fneziraslantas-tech/Tezgah/pull/6)).
   - Discovery does not read files through links, and git pathname config values (including `:(optional)` /
     `%(prefix)` forms and values reached through a link in the worktree) are refused when they lead to a network
-    share (#8).
-  - Trust is bound to the command shown in the trust prompt, anchored to the folder's file id instead of its creation
-    time, and a stale "cloned by Tezgah" mark is dropped when an untrusted folder is replaced (#9). Folders trusted
+    share ([#8](https://github.com/fneziraslantas-tech/Tezgah/pull/8)).
+  - Trust is bound to the command shown in the trust prompt, anchored to the folder's volume serial and file id (plus
+    creation time) rather than its creation time alone, and a stale "cloned by Tezgah" mark is dropped when an untrusted folder is replaced ([#9](https://github.com/fneziraslantas-tech/Tezgah/pull/9)). Folders trusted
     with earlier builds are asked about once more.
 - Uninstall stops only the processes shown in the plan, and the free-space dialog warns when deletion is permanent
-  (#7).
+  ([#7](https://github.com/fneziraslantas-tech/Tezgah/pull/7)).
 
 ### Fixed
 
 - Release pipeline: publish no longer fails on the SDK-implicit `ILLink.Tasks` package; CI now runs a publish smoke
-  test on every pull request (#10).
-- Timing-dependent tests made robust under machine load (#2, #3, #4).
+  test on every pull request ([#10](https://github.com/fneziraslantas-tech/Tezgah/pull/10)).
+- Timing-dependent tests made robust under machine load ([#2](https://github.com/fneziraslantas-tech/Tezgah/pull/2), [#3](https://github.com/fneziraslantas-tech/Tezgah/pull/3), [#4](https://github.com/fneziraslantas-tech/Tezgah/pull/4)).
 
 ### Changed
 
 - Test tooling updated: coverlet.collector 10.1.1, Microsoft.NET.Test.Sdk 18.12.0, xunit.runner.visualstudio 4.0.1
-  (#1).
+  ([#1](https://github.com/fneziraslantas-tech/Tezgah/pull/1)).
 
 [Unreleased]: https://github.com/fneziraslantas-tech/Tezgah/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/fneziraslantas-tech/Tezgah/releases/tag/v0.1.1

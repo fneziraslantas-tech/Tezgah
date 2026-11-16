@@ -13,8 +13,8 @@ body:
     id: version
     attributes:
       label: "Tezgah sürümü / Tezgah version"
-      description: "F1 → Hakkında / About"
-      placeholder: "0.1.1"
+      description: "İndirdiğin zip adı ya da sürüm etiketi (ör. Tezgah-v0.1.1-win-x64.zip). v0.1.1'in Hakkında penceresi yanlışlıkla 0.1.0 gösterir. / The zip file name or release tag you downloaded (e.g. Tezgah-v0.1.1-win-x64.zip). The v0.1.1 About dialog wrongly shows 0.1.0."
+      placeholder: "v0.1.1"
     validations:
       required: true
   - type: input
