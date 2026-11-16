@@ -29,7 +29,8 @@ internal sealed class CommandExecutor : ICommandExecutor
         var resolved = ProcessLaunch.Resolve(spec.FileName, spec.WorkingDirectory, spec.Environment)
             ?? throw new FileNotFoundException(L.T($"Program bulunamadı: {spec.FileName}", $"Executable not found: {spec.FileName}"), spec.FileName);
 
-        var psi = ProcessLaunch.CreateStartInfo(resolved, spec, redirectInput: true);
+        // Tool/uninstaller commands never resolve bare program names from their working directory (cmd.exe shims).
+        var psi = ProcessLaunch.CreateStartInfo(resolved, spec, redirectInput: true, [new("NoDefaultCurrentDirectoryInExePath", "1")]);
         using var process = new Process { StartInfo = psi };
         using var job = new JobObject();
         try
@@ -62,6 +63,11 @@ internal sealed class CommandExecutor : ICommandExecutor
         try
         {
             await process.WaitForExitAsync(linked.Token).ConfigureAwait(false);
+            if (spec.WaitForProcessTree)
+            {
+                // Relaunched copies (e.g. NSIS %TEMP%\~nsuA.tmp\Au_.exe) are still in the job: wait for them too.
+                await job.WaitUntilEmptyAsync(linked.Token).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -73,11 +79,11 @@ internal sealed class CommandExecutor : ICommandExecutor
             }
         }
 
-        // The root exited; anything it left behind in the job is killed so pipes close and readers finish.
+        // The root (and, in tree mode, everything else) exited; leftovers are killed so pipes close and readers finish.
+        var exitCode = timedOut ? -1 : process.ExitCode;
         job.Terminate();
         var stdout = await stdoutTask.ConfigureAwait(false);
         var stderr = await stderrTask.ConfigureAwait(false);
-        var exitCode = timedOut ? -1 : process.ExitCode;
         return new CommandResult(exitCode, stdout, stderr, timedOut);
     }
 

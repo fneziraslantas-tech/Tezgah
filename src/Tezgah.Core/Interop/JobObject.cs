@@ -47,6 +47,23 @@ internal sealed unsafe class JobObject : IDisposable
         }
     }
 
+    /// <summary>Number of processes currently alive in the job, or null when it cannot be queried.</summary>
+    public int? ActiveProcesses
+    {
+        get
+        {
+            if (_handle.IsClosed || _handle.IsInvalid)
+            {
+                return null;
+            }
+
+            var info = default(JobObjectBasicAccountingInformation);
+            return NativeMethods.QueryInformationJobObject(_handle, NativeMethods.JobObjectBasicAccountingInformationClass, &info, (uint)sizeof(JobObjectBasicAccountingInformation), 0)
+                ? (int)info.ActiveProcesses
+                : null;
+        }
+    }
+
     /// <summary>Kills every process in the job. Safe to call repeatedly or after dispose.</summary>
     public void Terminate(uint exitCode = 1)
     {
@@ -59,4 +76,20 @@ internal sealed unsafe class JobObject : IDisposable
     }
 
     public void Dispose() => _handle.Dispose();
+}
+
+internal static class JobObjectExtensions
+{
+    /// <summary>
+    /// Waits until every process in the job has exited (polling). Used for vendor uninstallers that relaunch
+    /// themselves from %TEMP% (NSIS, Inno Setup) and let the first process exit immediately.
+    /// </summary>
+    public static async Task WaitUntilEmptyAsync(this JobObject job, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        while (job.ActiveProcesses is > 0)
+        {
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+    }
 }

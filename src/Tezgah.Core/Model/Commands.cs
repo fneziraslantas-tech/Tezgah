@@ -12,6 +12,13 @@ public sealed record CommandSpec
     public required string WorkingDirectory { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
 
+    /// <summary>
+    /// Short commands normally end when their first process exits (leftover children are killed). When true the command
+    /// is only finished once every process it started has exited — needed for uninstallers that hand the real work to a
+    /// relaunched copy of themselves (NSIS, Inno Setup) and exit at once.
+    /// </summary>
+    public bool WaitForProcessTree { get; init; }
+
     /// <summary>Human-readable preview shown to the user before execution (quoted like a command line).</summary>
     public string Display =>
         string.Join(' ', new[] { FileName }.Concat(Arguments).Select(a =>

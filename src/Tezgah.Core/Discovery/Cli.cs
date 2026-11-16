@@ -18,12 +18,21 @@ namespace Tezgah.Core.Discovery;
 /// (<c>&amp; | &lt; &gt; ^ % " !</c>, CR or LF). Because no quote can appear inside an argument, wrapping each one in
 /// double quotes is unambiguous and nothing can break out into a second command. Anything else is refused.
 /// This is the single place where a command line string is assembled, and it is only reachable after that validation.</item>
-/// <item>Output is captured as UTF-8, stdin is closed immediately, and on timeout or cancellation the whole process tree is killed.</item>
+/// <item>Output is captured as UTF-8 (bounded), stdin is closed immediately. The process tree is bound to a kill-on-close
+/// Job Object: descendants are killed when the command finishes, times out or is cancelled, so an orphan holding the
+/// pipes can neither outlive the call nor stall it.</item>
+/// <item><c>NoDefaultCurrentDirectoryInExePath</c> is set so cmd.exe shims never resolve bare names from the working directory.</item>
 /// </list>
 /// </remarks>
 internal static class Cli
 {
     private static readonly string[] RunnableExtensions = [".exe", ".com", ".cmd", ".bat"];
+
+    /// <summary>Maximum characters kept per stream; the rest is read and discarded.</summary>
+    internal const int MaxCapturedChars = 8_000_000;
+
+    /// <summary>How long readers may take to drain after the process exited before the remaining output is abandoned.</summary>
+    private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(2);
     private static readonly System.Buffers.SearchValues<char> CmdMetaCharacters = System.Buffers.SearchValues.Create("&|<>^%\"!\r\n");
 
     /// <summary>Resolves <paramref name="name"/> to a full path using PATH and PATHEXT. Returns null when not found.</summary>
@@ -176,6 +185,7 @@ internal static class Cli
         }
 
         psi.Environment["NO_COLOR"] = "1";
+        psi.Environment["NoDefaultCurrentDirectoryInExePath"] = "1";
         if (environment is not null)
         {
             foreach (var (k, v) in environment)
@@ -187,35 +197,7 @@ internal static class Cli
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
         using var process = new Process { StartInfo = psi };
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is null)
-            {
-                return;
-            }
-
-            lock (stdout)
-            {
-                stdout.Append(e.Data).Append('\n');
-            }
-
-            onLine?.Invoke(e.Data);
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is null)
-            {
-                return;
-            }
-
-            lock (stderr)
-            {
-                stderr.Append(e.Data).Append('\n');
-            }
-
-            onLine?.Invoke(e.Data);
-        };
-
+        using var job = new Interop.JobObject();
         try
         {
             if (!process.Start())
@@ -230,6 +212,15 @@ internal static class Cli
 
         try
         {
+            job.Assign(process);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // fall back to Process.Kill(entireProcessTree) on timeout/cancel
+        }
+
+        try
+        {
             process.StandardInput.Close();
         }
         catch (IOException)
@@ -237,8 +228,10 @@ internal static class Cli
             // process already gone
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        // Explicit readers (not BeginOutputReadLine): WaitForExitAsync then waits for the process only, never for pipe EOF.
+        var readers = Task.WhenAll(
+            ReadLinesAsync(process.StandardOutput, stdout, onLine),
+            ReadLinesAsync(process.StandardError, stderr, onLine));
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(timeout);
@@ -249,7 +242,7 @@ internal static class Cli
         }
         catch (OperationCanceledException)
         {
-            Kill(process);
+            Kill(process, job);
             if (ct.IsCancellationRequested)
             {
                 throw;
@@ -258,10 +251,17 @@ internal static class Cli
             timedOut = true;
         }
 
-        if (!timedOut)
+        var exitCode = timedOut ? -1 : process.ExitCode;
+
+        // Descendants that outlived the root (credential helpers, daemons...) die here, which also closes the pipes.
+        job.Terminate();
+        try
         {
-            // Make sure the asynchronous readers drained the pipes.
-            process.WaitForExit();
+            await readers.WaitAsync(DrainTimeout, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // a pipe holder outside the job: keep what was read so far
         }
 
         string o, e;
@@ -275,11 +275,35 @@ internal static class Cli
             e = stderr.ToString();
         }
 
-        return new CommandResult(timedOut ? -1 : process.ExitCode, o, e, timedOut);
+        return new CommandResult(exitCode, o, e, timedOut);
     }
 
-    private static void Kill(Process process)
+    private static async Task ReadLinesAsync(StreamReader reader, StringBuilder sink, Action<string>? onLine)
     {
+        try
+        {
+            while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+            {
+                lock (sink)
+                {
+                    if (sink.Length < MaxCapturedChars)
+                    {
+                        sink.Append(line, 0, Math.Min(line.Length, MaxCapturedChars - sink.Length)).Append('\n');
+                    }
+                }
+
+                onLine?.Invoke(line);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // pipe broken when the process was killed
+        }
+    }
+
+    private static void Kill(Process process, Interop.JobObject job)
+    {
+        job.Terminate();
         try
         {
             if (!process.HasExited)

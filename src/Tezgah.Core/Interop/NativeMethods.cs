@@ -106,8 +106,23 @@ internal unsafe struct ShFileOpStruct32
     public char* ProgressTitle;
 }
 
+/// <summary>JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct JobObjectBasicAccountingInformation
+{
+    public long TotalUserTime;
+    public long TotalKernelTime;
+    public long ThisPeriodTotalUserTime;
+    public long ThisPeriodTotalKernelTime;
+    public uint TotalPageFaultCount;
+    public uint TotalProcesses;
+    public uint ActiveProcesses;
+    public uint TotalTerminatedProcesses;
+}
+
 internal static unsafe partial class NativeMethods
 {
+    public const int JobObjectBasicAccountingInformationClass = 1;
     public const int JobObjectExtendedLimitInformationClass = 9;
     public const uint JobObjectLimitKillOnJobClose = 0x00002000;
 
@@ -140,6 +155,10 @@ internal static unsafe partial class NativeMethods
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool TerminateJobObject(SafeJobHandle job, uint exitCode);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool QueryInformationJobObject(SafeJobHandle job, int infoClass, void* info, uint length, nint returnLength);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
