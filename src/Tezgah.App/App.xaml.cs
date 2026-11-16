@@ -19,7 +19,7 @@ namespace Tezgah.App;
 ///   --demo-empty    demo mode starting with an empty catalog (shows the first-launch screen)
 ///   --theme T       light | dark | system for this session (does not change saved settings)
 ///   --lang L        tr | en for this session
-///   --screenshot P  (dev) render the main window to PNG file P after startup and exit
+///   --screenshot P  (Debug builds only) demo mode: render the main window to PNG file P after startup and exit
 /// </summary>
 public partial class App : Application, IDisposable
 {
@@ -34,9 +34,11 @@ public partial class App : Application, IDisposable
         ArgumentNullException.ThrowIfNull(e);
         base.OnStartup(e);
         var args = e.Args;
-        var screenshotPath = ArgValue(args, "--screenshot");
+        var screenshotPath = DevScreenshotPath(args);
         var demoEmpty = args.Contains("--demo-empty", StringComparer.OrdinalIgnoreCase);
-        var forceDemo = demoEmpty || args.Contains("--demo", StringComparer.OrdinalIgnoreCase);
+
+        // The screenshot switch always uses the fake services: it never starts the user's real projects.
+        var forceDemo = demoEmpty || screenshotPath is not null || args.Contains("--demo", StringComparer.OrdinalIgnoreCase);
 
         _logProvider = new FileLoggerProvider();
         HookGlobalExceptionHandlers();
@@ -100,26 +102,73 @@ public partial class App : Application, IDisposable
             vm.RefreshTexts();
         }
 
-        if (screenshotPath is not null)
+        if (screenshotPath is not null && _services.GetRequiredService<AppMode>().IsDemo)
         {
             await CaptureAsync(window, vm, screenshotPath);
         }
     }
 
+    /// <summary>The developer screenshot switch exists only in Debug builds; Release ignores it.</summary>
+    internal static string? DevScreenshotPath(string[] args)
+    {
+#if DEBUG
+        return ArgValue(args, "--screenshot");
+#else
+        _ = args;
+        return null;
+#endif
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
-        Dispose();
-        base.OnExit(e);
+        try
+        {
+            Dispose();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log(ex, "Exit");
+        }
+        finally
+        {
+            base.OnExit(e);
+        }
     }
 
     public void Dispose()
     {
-        _services?.Dispose();
+        var services = _services;
         _services = null;
-        _single?.Dispose();
-        _single = null;
-        _logProvider?.Dispose();
-        GC.SuppressFinalize(this);
+        try
+        {
+            if (services is not null)
+            {
+                DisposeContainer(services);
+            }
+        }
+        finally
+        {
+            try
+            {
+                _single?.Dispose();
+                _single = null;
+            }
+            finally
+            {
+                _logProvider?.Dispose();
+                GC.SuppressFinalize(this);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Disposes the container asynchronously (RunService and friends are IAsyncDisposable; a synchronous
+    /// ServiceProvider.Dispose throws for those) on the thread pool, so it cannot deadlock on the UI thread.
+    /// </summary>
+    internal static void DisposeContainer(ServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        Task.Run(() => services.DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(15));
     }
 
     private static string? ArgValue(string[] args, string name)

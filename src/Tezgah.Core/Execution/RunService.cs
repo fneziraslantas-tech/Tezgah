@@ -7,7 +7,7 @@ namespace Tezgah.Core.Execution;
 /// Tracks processes the user started from Tezgah. Enforces the workspace-trust model and the path guard before any
 /// repository code runs. Disposing (DI container disposal at app shutdown) stops everything.
 /// </summary>
-internal sealed class RunService(ICatalogService catalog, IPathGuard pathGuard, IProcessHost host) : IRunService, IAsyncDisposable
+internal sealed class RunService(ICatalogService catalog, IPathGuard pathGuard, IProcessHost host) : IRunService, IAsyncDisposable, IDisposable
 {
     private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(3);
 
@@ -102,6 +102,12 @@ internal sealed class RunService(ICatalogService catalog, IPathGuard pathGuard, 
             return [.. _running.Where(r => r.ItemId == itemId)];
         }
     }
+
+    /// <summary>
+    /// Synchronous disposal for containers disposed with <c>Dispose()</c> (a ServiceProvider throws for singletons that are
+    /// only IAsyncDisposable). Runs the async path on the thread pool so it never deadlocks on a UI thread.
+    /// </summary>
+    public void Dispose() => Task.Run(() => DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(10));
 
     public async ValueTask DisposeAsync()
     {
