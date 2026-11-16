@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Tezgah.Core.Execution;
 
 namespace Tezgah.Core.Tests.Execution;
 
-public class ProcessFinderTests
+public partial class ProcessFinderTests
 {
     [Fact]
     public async Task Stopping_a_folder_process_spares_children_whose_image_lives_elsewhere()
@@ -21,7 +23,7 @@ public class ProcessFinderTests
         Process? child = null;
         try
         {
-            Assert.True(await Specs.WaitUntilAsync(() => (child = FindChild(parent.Id, "PING.EXE")) is not null, TimeSpan.FromSeconds(10)));
+            Assert.True(await Specs.WaitUntilAsync(() => (child = FindChild(parent.Id, "PING.EXE")) is not null, TimeSpan.FromSeconds(30)));
 
             var finder = new ProcessFinder();
             var found = Assert.Single(finder.FindUnder(app));
@@ -67,16 +69,33 @@ public class ProcessFinderTests
         return null;
     }
 
+    // Native parent-PID lookup. The previous helper started a powershell.exe per candidate process, which on slow CI
+    // runners exceeded the 10 s discovery window and made this test flaky.
     private static int? ParentOf(int pid)
     {
-        var cmd = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
-        var psi = new ProcessStartInfo(cmd) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-Command");
-        psi.ArgumentList.Add($"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId");
-        using var p = Process.Start(psi)!;
-        var output = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        return int.TryParse(output.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parent) ? parent : null;
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            var status = NtQueryInformationProcess(p.SafeHandle, 0, out var info, Marshal.SizeOf<ProcessBasicInformation>(), out _);
+            return status == 0 ? (int)info.InheritedFromUniqueProcessId : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null; // exited or not accessible
+        }
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        public nint ExitStatus;
+        public nint PebBaseAddress;
+        public nint AffinityMask;
+        public nint BasePriority;
+        public nint UniqueProcessId;
+        public nint InheritedFromUniqueProcessId;
+    }
+
+    [LibraryImport("ntdll.dll")]
+    private static partial int NtQueryInformationProcess(SafeProcessHandle process, int infoClass, out ProcessBasicInformation info, int length, out int returnLength);
 }
