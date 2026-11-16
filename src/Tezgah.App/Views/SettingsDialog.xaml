@@ -1,0 +1,86 @@
+<Window x:Class="Tezgah.App.Views.SettingsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Tezgah.App.ViewModels"
+        mc:Ignorable="d" d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}"
+        Style="{StaticResource DialogWindow}" Width="620" Title="{DynamicResource Settings_Title}">
+    <StackPanel>
+        <ScrollViewer MaxHeight="640" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,22,24,16">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE713;" Style="{StaticResource Icon}" FontSize="20" Margin="0,0,12,12" VerticalAlignment="Top" />
+                    <TextBlock Text="{DynamicResource Settings_Title}" Style="{StaticResource DialogTitle}" />
+                </StackPanel>
+
+                <!-- scan roots -->
+                <TextBlock Text="{DynamicResource Settings_ScanRoots}" Style="{StaticResource Caption}" />
+                <TextBlock Text="{DynamicResource Settings_ScanRootsHint}" Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ListBox ItemsSource="{Binding ScanRoots}" SelectedItem="{Binding SelectedRoot}" Height="120" />
+                    <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                        <Button Style="{StaticResource OutlineButton}" Command="{Binding AddRootCommand}" HorizontalContentAlignment="Left" Margin="0,0,0,6">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE710;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Common_Add}" /></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource OutlineButton}" Command="{Binding RemoveRootCommand}" HorizontalContentAlignment="Left">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE738;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Common_Remove}" /></StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <!-- excluded -->
+                <TextBlock Text="{DynamicResource Settings_Excluded}" Style="{StaticResource Caption}" Margin="0,16,0,4" />
+                <TextBox Text="{Binding ExcludedText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" Height="90"
+                         VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource MonoFont}" FontSize="12" />
+
+                <Grid Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Settings_MaxDepth}" Style="{StaticResource Caption}" />
+                        <TextBox Text="{Binding MaxDepth, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="{DynamicResource Settings_ForgottenDays}" Style="{StaticResource Caption}" />
+                        <TextBox Text="{Binding ForgottenAfterDays, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                </Grid>
+
+                <CheckBox Content="{DynamicResource Settings_IncludeApps}" IsChecked="{Binding IncludeInstalledApps}" Margin="0,16,0,0" />
+                <CheckBox Content="{DynamicResource Settings_IncludeTools}" IsChecked="{Binding IncludePackageTools}" Margin="0,4,0,0" />
+                <CheckBox Content="{DynamicResource Settings_RecycleBin}" IsChecked="{Binding UseRecycleBin}" Margin="0,4,0,0" />
+
+                <Grid Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Settings_Language}" Style="{StaticResource Caption}" />
+                        <ComboBox ItemsSource="{Binding LanguageOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Language}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="{DynamicResource Settings_Theme}" Style="{StaticResource Caption}" />
+                        <ComboBox ItemsSource="{Binding ThemeOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Theme}" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+        <Border Style="{StaticResource DialogFooter}">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Style="{StaticResource OutlineButton}" Content="{DynamicResource Common_Cancel}" Margin="0,0,8,0" MinWidth="96" IsCancel="True"
+                        Command="{Binding CancelCommand}" />
+                <Button Style="{StaticResource PrimaryButton}" Content="{DynamicResource Common_Save}" MinWidth="96" IsDefault="True" Command="{Binding SaveCommand}" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</Window>

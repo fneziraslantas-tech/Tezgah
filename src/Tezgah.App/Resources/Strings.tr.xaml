@@ -1,0 +1,216 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+    <!-- Türkçe (varsayılan). Anahtarlar Strings.en.xaml ile birebir aynı olmalı (testler kontrol eder). -->
+
+    <!-- genel -->
+    <sys:String x:Key="Common_Cancel">Vazgeç</sys:String>
+    <sys:String x:Key="Common_Close">Kapat</sys:String>
+    <sys:String x:Key="Common_Save">Kaydet</sys:String>
+    <sys:String x:Key="Common_Ok">Tamam</sys:String>
+    <sys:String x:Key="Common_Add">Ekle</sys:String>
+    <sys:String x:Key="Common_Remove">Çıkar</sys:String>
+    <sys:String x:Key="Common_Browse">Gözat…</sys:String>
+    <sys:String x:Key="Common_Later">Sonra</sys:String>
+    <sys:String x:Key="Copied">Panoya kopyalandı.</sys:String>
+    <sys:String x:Key="Demo_Tooltip">Demo modu: örnek veriler gösteriliyor, bilgisayarında hiçbir şey çalıştırılmıyor veya silinmiyor.</sys:String>
+    <sys:String x:Key="Lang_tr">Türkçe</sys:String>
+    <sys:String x:Key="Lang_en">English</sys:String>
+    <sys:String x:Key="Theme_System">Windows ile aynı</sys:String>
+    <sys:String x:Key="Theme_Light">Açık</sys:String>
+    <sys:String x:Key="Theme_Dark">Koyu</sys:String>
+
+    <!-- üst çubuk -->
+    <sys:String x:Key="Search_Placeholder">Ara: ad, klasör, açıklama, etiket, GitHub adresi…</sys:String>
+    <sys:String x:Key="Scan_Button">Tara</sys:String>
+    <sys:String x:Key="Scan_Cancel">Durdur</sys:String>
+    <sys:String x:Key="Scan_Tooltip">Bilgisayarı yeniden tara (F5)</sys:String>
+    <sys:String x:Key="Scan_Starting">Tarama başlıyor…</sys:String>
+    <sys:String x:Key="Scan_Progress">Taranıyor… {0}  · {1} bulundu</sys:String>
+    <sys:String x:Key="Scan_Done">Tarama bitti: {0} öğe.</sys:String>
+    <sys:String x:Key="Scan_Cancelled">Tarama durduruldu.</sys:String>
+    <sys:String x:Key="Scan_Failed">Tarama başarısız: {0}</sys:String>
+    <sys:String x:Key="Add_Tooltip">Ekle</sys:String>
+    <sys:String x:Key="Add_Folder">Klasör ekle…</sys:String>
+    <sys:String x:Key="Add_Clone">GitHub'dan klonla…</sys:String>
+    <sys:String x:Key="Add_PickFolder">Eklenecek proje klasörünü seç</sys:String>
+    <sys:String x:Key="Add_NotRecognized">Bu klasör bir proje olarak tanınmadı.</sys:String>
+    <sys:String x:Key="Add_Failed">Klasör eklenemedi: {0}</sys:String>
+    <sys:String x:Key="Settings_Tooltip">Ayarlar (Ctrl+,)</sys:String>
+
+    <!-- filtreler -->
+    <sys:String x:Key="Filter_All">Tümü</sys:String>
+    <sys:String x:Key="Filter_Repos">Repolar</sys:String>
+    <sys:String x:Key="Filter_Apps">Uygulamalar</sys:String>
+    <sys:String x:Key="Filter_Tools">Araçlar</sys:String>
+    <sys:String x:Key="Filter_Running">Çalışanlar</sys:String>
+    <sys:String x:Key="Filter_Forgotten">Unutulanlar</sys:String>
+    <sys:String x:Key="Filter_Favorites">Favoriler</sys:String>
+    <sys:String x:Key="Sort_Label">Sırala</sys:String>
+    <sys:String x:Key="Sort_Activity">Son etkinlik</sys:String>
+    <sys:String x:Key="Sort_Name">Ad</sys:String>
+    <sys:String x:Key="Sort_Size">Boyut</sys:String>
+
+    <!-- liste -->
+    <sys:String x:Key="List_Name">Bulunanlar</sys:String>
+    <sys:String x:Key="List_NoMatches">Bu filtreye uyan bir şey yok.</sys:String>
+    <sys:String x:Key="Item_Running">Çalışıyor</sys:String>
+    <sys:String x:Key="Item_ForgottenDays">{0} gündür dokunulmadı</sys:String>
+    <sys:String x:Key="Kind_GitRepository">Git reposu</sys:String>
+    <sys:String x:Key="Kind_ProjectFolder">Proje klasörü</sys:String>
+    <sys:String x:Key="Kind_InstalledApp">Uygulama</sys:String>
+    <sys:String x:Key="Kind_PackageTool">Komut satırı aracı</sys:String>
+
+    <!-- zaman -->
+    <sys:String x:Key="Time_Unknown">bilinmiyor</sys:String>
+    <sys:String x:Key="Time_JustNow">az önce</sys:String>
+    <sys:String x:Key="Time_MinutesAgo">{0} dk önce</sys:String>
+    <sys:String x:Key="Time_HoursAgo">{0} sa önce</sys:String>
+    <sys:String x:Key="Time_Yesterday">dün</sys:String>
+    <sys:String x:Key="Time_DaysAgo">{0} gün önce</sys:String>
+    <sys:String x:Key="Time_MonthsAgo">{0} ay önce</sys:String>
+    <sys:String x:Key="Time_YearsAgo">{0} yıl önce</sys:String>
+
+    <!-- ayrıntı -->
+    <sys:String x:Key="Detail_NothingSelected">Soldan bir öğe seç.</sys:String>
+    <sys:String x:Key="Detail_ShortcutsHint">Enter çalıştır · Ctrl+. durdur · Del kaldır · Ctrl+O klasör · Ctrl+T terminal · F5 tara</sys:String>
+    <sys:String x:Key="Detail_Path">Konum</sys:String>
+    <sys:String x:Key="Detail_Link">Kaynak</sys:String>
+    <sys:String x:Key="Detail_Info">Bilgi</sys:String>
+    <sys:String x:Key="Detail_LastActivity">son etkinlik {0}</sys:String>
+    <sys:String x:Key="Detail_Installed">kuruldu {0}</sys:String>
+    <sys:String x:Key="Detail_Artifacts">{0} yeniden oluşturulabilir dosya (node_modules, .venv, bin…)</sys:String>
+    <sys:String x:Key="Action_OpenFolder">Klasörü aç</sys:String>
+    <sys:String x:Key="Action_Terminal">Terminalde aç</sys:String>
+    <sys:String x:Key="Action_VsCode">VS Code'da aç</sys:String>
+    <sys:String x:Key="Action_TagsNote">Etiket / not</sys:String>
+    <sys:String x:Key="Action_Cleanup">Alan aç</sys:String>
+    <sys:String x:Key="Action_Uninstall">Kaldır</sys:String>
+    <sys:String x:Key="Action_Favorite">Favorilere ekle / çıkar</sys:String>
+    <sys:String x:Key="Action_CopyPath">Yolu kopyala</sys:String>
+    <sys:String x:Key="Open_Failed">Bağlantı açılamadı.</sys:String>
+    <sys:String x:Key="Open_FolderMissing">Klasör bulunamadı; taşınmış ya da silinmiş olabilir.</sys:String>
+    <sys:String x:Key="Open_TerminalFailed">Terminal açılamadı (Windows Terminal ya da PowerShell bulunamadı).</sys:String>
+    <sys:String x:Key="Open_VsCodeMissing">VS Code bulunamadı.</sys:String>
+    <sys:String x:Key="Refresh_Failed">Yenilenemedi: {0}</sys:String>
+    <sys:String x:Key="Meta_Tags">Etiketler</sys:String>
+    <sys:String x:Key="Meta_TagsHint">Virgülle ayır: web, deneme, iş</sys:String>
+    <sys:String x:Key="Meta_Note">Not</sys:String>
+
+    <!-- git -->
+    <sys:String x:Key="Git_Unpushed">{0} commit gönderilmedi</sys:String>
+    <sys:String x:Key="Git_NoUpstream">uzak dal yok, commit'ler yalnız bu bilgisayarda</sys:String>
+    <sys:String x:Key="Git_Dirty">kaydedilmemiş değişiklik var</sys:String>
+    <sys:String x:Key="Git_WorkingTree">{0} değişen · {1} izlenmeyen · {2} stash</sys:String>
+    <sys:String x:Key="Git_Pull">Güncelle (git pull)</sys:String>
+    <sys:String x:Key="Git_Fetch">Uzak depoyu kontrol et (git fetch)</sys:String>
+    <sys:String x:Key="Git_PullDone">{0} güncellendi. {1}</sys:String>
+    <sys:String x:Key="Git_PullFailed">git pull başarısız: {0}</sys:String>
+
+    <!-- çalıştırma -->
+    <sys:String x:Key="Run_Button">Çalıştır</sys:String>
+    <sys:String x:Key="Run_Stop">Durdur</sys:String>
+    <sys:String x:Key="Run_Profiles">Komutlar</sys:String>
+    <sys:String x:Key="Run_Default">varsayılan</sys:String>
+    <sys:String x:Key="Run_NoRuns">Henüz çalıştırılmadı. "Çalıştır" komutu yukarıda gösterilen satırı bu klasörde çalıştırır; çıktısı burada görünür.</sys:String>
+    <sys:String x:Key="Run_CloseTab">Sekmeyi kapat (çalışıyorsa durdurur)</sys:String>
+    <sys:String x:Key="Run_RunningSince">{0} itibarıyla çalışıyor · PID {1}</sys:String>
+    <sys:String x:Key="Run_ExitedWithCode">Bitti · çıkış kodu {0}</sys:String>
+    <sys:String x:Key="Run_Failed">"{0}" başlatılamadı: {1}</sys:String>
+    <sys:String x:Key="Run_StopFailed">Durdurulamadı: {0}</sys:String>
+    <sys:String x:Key="ProfileKind_Run">Çalıştır</sys:String>
+    <sys:String x:Key="ProfileKind_Setup">Kurulum</sys:String>
+    <sys:String x:Key="ProfileKind_Build">Derle</sys:String>
+    <sys:String x:Key="ProfileKind_Test">Test</sys:String>
+    <sys:String x:Key="Console_AutoScroll">Yeni satırlarda otomatik kaydır</sys:String>
+    <sys:String x:Key="Console_AutoScrollShort">Takip et</sys:String>
+    <sys:String x:Key="Console_Copy">Tüm çıktıyı kopyala</sys:String>
+    <sys:String x:Key="Console_Clear">Temizle</sys:String>
+    <sys:String x:Key="Console_Name">Çıktı</sys:String>
+    <sys:String x:Key="Console_Input">Programa girdi gönder (Enter)</sys:String>
+    <sys:String x:Key="Console_Send">Gönder</sys:String>
+
+    <!-- güven -->
+    <sys:String x:Key="Trust_Title">Bu koda güveniyor musun?</sys:String>
+    <sys:String x:Key="Trust_Message">Bu klasördeki kod bilgisayarında çalıştırılacak. Kaynağa güveniyor musun?</sys:String>
+    <sys:String x:Key="Trust_Item">Öğe</sys:String>
+    <sys:String x:Key="Trust_Source">Kaynak</sys:String>
+    <sys:String x:Key="Trust_Command">Komut</sys:String>
+    <sys:String x:Key="Trust_UnknownSource">bilinmiyor (uzak adres yok)</sys:String>
+    <sys:String x:Key="Trust_Footnote">Bir kez onayladığında bu klasör "güvenilir" olarak işaretlenir ve bir daha sorulmaz.</sys:String>
+    <sys:String x:Key="Trust_Confirm">Güven ve çalıştır</sys:String>
+    <sys:String x:Key="Trust_Cancel">Vazgeç</sys:String>
+
+    <!-- kaldırma -->
+    <sys:String x:Key="Uninstall_Title">{0} kaldırılsın mı?</sys:String>
+    <sys:String x:Key="Uninstall_Planning">Neyin silineceği hesaplanıyor…</sys:String>
+    <sys:String x:Key="Uninstall_PlanFailed">Kaldırma planı hazırlanamadı: {0}</sys:String>
+    <sys:String x:Key="Uninstall_Steps">Yapılacaklar</sys:String>
+    <sys:String x:Key="Uninstall_StepLocked">Zorunlu adımlar kapatılamaz.</sys:String>
+    <sys:String x:Key="Uninstall_Total">Boşalacak alan: {0}</sys:String>
+    <sys:String x:Key="Uninstall_TypeToConfirm">Onaylamak için '{0}' yaz</sys:String>
+    <sys:String x:Key="Uninstall_Confirm">Kaldır</sys:String>
+    <sys:String x:Key="Uninstall_Done">{0} kaldırıldı. {1} boşaldı.</sys:String>
+    <sys:String x:Key="Uninstall_Partial">{0} adım başarısız oldu; ayrıntılar aşağıda.</sys:String>
+    <sys:String x:Key="Uninstall_Failed">Kaldırma başarısız: {0}</sys:String>
+    <sys:String x:Key="Uninstall_Removed">{0} kaldırıldı.</sys:String>
+    <sys:String x:Key="StepKind_StopProcesses">Süreçleri durdur</sys:String>
+    <sys:String x:Key="StepKind_RunCommand">Kaldırıcıyı çalıştır</sys:String>
+    <sys:String x:Key="StepKind_RemoveDirectory">Klasörü sil</sys:String>
+    <sys:String x:Key="StepKind_RemoveShortcut">Kısayolu sil</sys:String>
+    <sys:String x:Key="StepKind_RemoveCatalogEntry">Listeden çıkar</sys:String>
+
+    <!-- temizlik -->
+    <sys:String x:Key="Cleanup_Title">{0}: alan aç</sys:String>
+    <sys:String x:Key="Cleanup_Explain">Bu klasörler kurulum/derleme sırasında oluşur ve gerektiğinde yeniden oluşturulabilir (ör. npm install, pip install). Kodun silinmez.</sys:String>
+    <sys:String x:Key="Cleanup_Total">Seçilen: {0}</sys:String>
+    <sys:String x:Key="Cleanup_Confirm">Temizle</sys:String>
+    <sys:String x:Key="Cleanup_Done">{0} boşaltıldı.</sys:String>
+    <sys:String x:Key="Cleanup_Failed">Temizlenemedi: {0}</sys:String>
+
+    <!-- klonla -->
+    <sys:String x:Key="Clone_Title">GitHub'dan klonla</sys:String>
+    <sys:String x:Key="Clone_Url">Depo adresi</sys:String>
+    <sys:String x:Key="Clone_UrlHint">https://github.com/kullanici/depo  ya da  git@github.com:kullanici/depo.git</sys:String>
+    <sys:String x:Key="Clone_Target">Hangi klasörün içine</sys:String>
+    <sys:String x:Key="Clone_PickParent">Klonun konacağı klasörü seç</sys:String>
+    <sys:String x:Key="Clone_Confirm">Klonla</sys:String>
+    <sys:String x:Key="Clone_Failed">Klonlama başarısız.</sys:String>
+    <sys:String x:Key="Clone_Cancelled">Klonlama iptal edildi.</sys:String>
+    <sys:String x:Key="Clone_Done">{0} klonlandı.</sys:String>
+
+    <!-- ayarlar -->
+    <sys:String x:Key="Settings_Title">Ayarlar</sys:String>
+    <sys:String x:Key="Settings_ScanRoots">TARANACAK KLASÖRLER</sys:String>
+    <sys:String x:Key="Settings_ScanRootsHint">Boş bırakırsan kullanıcı klasöründeki yaygın yerler (source\repos, Desktop, Downloads, Documents…) taranır.</sys:String>
+    <sys:String x:Key="Settings_PickRoot">Taranacak klasörü seç</sys:String>
+    <sys:String x:Key="Settings_Excluded">ATLANACAK KLASÖR ADLARI (satır başına bir tane)</sys:String>
+    <sys:String x:Key="Settings_MaxDepth">EN FAZLA DERİNLİK</sys:String>
+    <sys:String x:Key="Settings_ForgottenDays">KAÇ GÜN SONRA "UNUTULMUŞ"</sys:String>
+    <sys:String x:Key="Settings_IncludeApps">Kurulu uygulamaları da göster (Uygulamalar ve özellikler)</sys:String>
+    <sys:String x:Key="Settings_IncludeTools">Paket yöneticisi araçlarını da göster (pipx, npm -g, dotnet tool, cargo, scoop…)</sys:String>
+    <sys:String x:Key="Settings_RecycleBin">Silinenleri Geri Dönüşüm Kutusu'na taşı (önerilir)</sys:String>
+    <sys:String x:Key="Settings_Language">DİL</sys:String>
+    <sys:String x:Key="Settings_Theme">TEMA</sys:String>
+    <sys:String x:Key="Settings_RescanPrompt">Tarama ayarları değişti. Şimdi yeniden taransın mı?</sys:String>
+    <sys:String x:Key="Settings_SaveFailed">Ayarlar kaydedilemedi: {0}</sys:String>
+
+    <!-- boş durum -->
+    <sys:String x:Key="Empty_Title">Bilgisayarındakileri bulalım</sys:String>
+    <sys:String x:Key="Empty_Body">Tezgah; GitHub'dan klonladığın repoları, kurduğun uygulamaları ve komut satırı araçlarını tek listede toplar. Unuttuğun bir projeyi bulur, tek tıkla çalıştırır, işin bitince temizce kaldırırsın.</sys:String>
+    <sys:String x:Key="Empty_ScanButton">Bilgisayarı tara</sys:String>
+    <sys:String x:Key="Empty_Privacy">Tarama yalnız bu bilgisayarda yapılır; hiçbir şey dışarı gönderilmez, hiçbir kod sen istemeden çalıştırılmaz.</sys:String>
+
+    <!-- durum çubuğu -->
+    <sys:String x:Key="Status_Totals">{0} repo · {1} uygulama · {2} araç · {3} · {4} unutulmuş · {5} çalışıyor</sys:String>
+    <sys:String x:Key="Status_LastScan">Son tarama: {0}</sys:String>
+    <sys:String x:Key="Status_NeverScanned">Henüz taranmadı</sys:String>
+
+    <!-- kapatma / hatalar -->
+    <sys:String x:Key="Close_Title">Tezgah kapatılıyor</sys:String>
+    <sys:String x:Key="Close_Message">Çalışan {0} süreç durdurulsun mu?</sys:String>
+    <sys:String x:Key="Close_StopAndExit">Durdur ve çık</sys:String>
+    <sys:String x:Key="Error_Title">Bir şeyler ters gitti</sys:String>
+    <sys:String x:Key="Error_Unexpected" xml:space="preserve">Beklenmeyen bir hata oldu, ama Tezgah çalışmaya devam ediyor.&#x0a;&#x0a;{0}&#x0a;&#x0a;Ayrıntılar günlükte: {1}</sys:String>
+    <sys:String x:Key="Error_Init">Katalog yüklenemedi: {0}</sys:String>
+</ResourceDictionary>

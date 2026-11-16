@@ -1,12 +1,702 @@
-﻿<Window x:Class="Tezgah.App.MainWindow"
+<Window x:Class="Tezgah.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:Tezgah.App"
+        xmlns:vm="clr-namespace:Tezgah.App.ViewModels"
+        xmlns:views="clr-namespace:Tezgah.App.Views"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        Title="Tezgah" Height="820" Width="1320" MinHeight="520" MinWidth="880"
+        Icon="pack://application:,,,/Tezgah;component/Assets/tezgah.ico"
+        FontFamily="{StaticResource UiFont}" FontSize="13"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+        Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" RenderOptions.BitmapScalingMode="HighQuality">
 
+    <Window.InputBindings>
+        <KeyBinding Key="F5" Command="{Binding ScanCommand}" />
+        <KeyBinding Key="OemPeriod" Modifiers="Control" Command="{Binding StopCommand}" />
+        <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenFolderCommand}" />
+        <KeyBinding Key="T" Modifiers="Control" Command="{Binding OpenTerminalCommand}" />
+        <KeyBinding Key="OemComma" Modifiers="Control" Command="{Binding OpenSettingsCommand}" />
+    </Window.InputBindings>
+
+    <Grid x:Name="Root" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ───────── top bar ───────── -->
+        <Grid Grid.Row="0" Margin="16,12,12,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MaxWidth="440" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                <Image Source="pack://application:,,,/Tezgah;component/Assets/tezgah.ico" Width="22" Height="22" />
+                <TextBlock Text="Tezgah" FontFamily="{StaticResource DisplayFont}" FontSize="17" FontWeight="SemiBold" Margin="8,0,0,1" VerticalAlignment="Center" />
+                <Border Style="{StaticResource Badge}" Margin="8,0,0,0" Visibility="{Binding IsDemo, Converter={StaticResource BoolToVis}}"
+                        Background="{DynamicResource SystemFillColorCautionBackgroundBrush}" ToolTip="{DynamicResource Demo_Tooltip}">
+                    <TextBlock Text="DEMO" Style="{StaticResource BadgeText}" FontWeight="Bold" Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+                </Border>
+            </StackPanel>
+
+            <!-- search -->
+            <Grid Grid.Column="1" VerticalAlignment="Center">
+                <TextBox x:Name="SearchBox" Padding="32,6,28,6" VerticalContentAlignment="Center"
+                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=120}"
+                         AutomationProperties.Name="{DynamicResource Search_Placeholder}">
+                    <TextBox.InputBindings>
+                        <KeyBinding Key="Enter" Command="{Binding RunCommand}" />
+                    </TextBox.InputBindings>
+                </TextBox>
+                <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" HorizontalAlignment="Left" Margin="11,0,0,0"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" IsHitTestVisible="False" />
+                <TextBlock Text="{DynamicResource Search_Placeholder}" Margin="33,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="Ctrl+F" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" FontSize="11"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" IsHitTestVisible="False"
+                           Visibility="{Binding IsKeyboardFocusWithin, ElementName=SearchBox, Converter={StaticResource InvBoolToVis}}" />
+            </Grid>
+
+            <!-- scan progress -->
+            <TextBlock Grid.Column="2" Text="{Binding ScanStatusText}" Style="{StaticResource Muted}" VerticalAlignment="Center"
+                       HorizontalAlignment="Right" Margin="12,0" />
+
+            <Button Grid.Column="3" Command="{Binding ScanCommand}" Margin="0,0,6,0" ToolTip="{DynamicResource Scan_Tooltip}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource OutlineButton}">
+                        <Setter Property="Content">
+                            <Setter.Value>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE72C;" Style="{StaticResource Icon}" Margin="0,0,8,0" />
+                                    <TextBlock Text="{DynamicResource Scan_Button}" />
+                                </StackPanel>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsScanning}" Value="True">
+                                <Setter Property="Content">
+                                    <Setter.Value>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE71A;" Style="{StaticResource Icon}" Margin="0,0,8,0" />
+                                            <TextBlock Text="{DynamicResource Scan_Cancel}" />
+                                        </StackPanel>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <Button Grid.Column="4" x:Name="AddButton" Style="{StaticResource IconButton}" Content="&#xE710;" Margin="0,0,2,0"
+                    ToolTip="{DynamicResource Add_Tooltip}" Click="AddButton_Click">
+                <Button.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="{DynamicResource Add_Folder}" Command="{Binding AddFolderCommand}">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE8F4;" Style="{StaticResource Icon}" />
+                            </MenuItem.Icon>
+                        </MenuItem>
+                        <MenuItem Header="{DynamicResource Add_Clone}" Command="{Binding CloneCommand}">
+                            <MenuItem.Icon>
+                                <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" />
+                            </MenuItem.Icon>
+                        </MenuItem>
+                    </ContextMenu>
+                </Button.ContextMenu>
+            </Button>
+            <Button Grid.Column="5" Style="{StaticResource IconButton}" Content="&#xE713;" Command="{Binding OpenSettingsCommand}"
+                    ToolTip="{DynamicResource Settings_Tooltip}" />
+        </Grid>
+
+        <!-- ───────── filter chips + sort ───────── -->
+        <Grid Grid.Row="1" Margin="16,4,12,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=All}">
+                    <TextBlock><Run Text="{DynamicResource Filter_All}" /><Run Text="  " /><Run Text="{Binding CountAll, Mode=OneWay}" FontSize="11" /></TextBlock>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Repos}">
+                    <TextBlock><Run Text="{DynamicResource Filter_Repos}" /><Run Text="  " /><Run Text="{Binding CountRepos, Mode=OneWay}" FontSize="11" /></TextBlock>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Apps}">
+                    <TextBlock><Run Text="{DynamicResource Filter_Apps}" /><Run Text="  " /><Run Text="{Binding CountApps, Mode=OneWay}" FontSize="11" /></TextBlock>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Tools}">
+                    <TextBlock><Run Text="{DynamicResource Filter_Tools}" /><Run Text="  " /><Run Text="{Binding CountTools, Mode=OneWay}" FontSize="11" /></TextBlock>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Running}">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="7" Height="7" Fill="{DynamicResource SystemFillColorSuccessBrush}" Margin="0,1,6,0" />
+                        <TextBlock><Run Text="{DynamicResource Filter_Running}" /><Run Text="  " /><Run Text="{Binding RunningCount, Mode=OneWay}" FontSize="11" /></TextBlock>
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Forgotten}">
+                    <TextBlock><Run Text="{DynamicResource Filter_Forgotten}" /><Run Text="  " /><Run Text="{Binding CountForgotten, Mode=OneWay}" FontSize="11" /></TextBlock>
+                </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Favorites}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE735;" Style="{StaticResource Icon}" FontSize="11" Margin="0,1,6,0" />
+                        <TextBlock><Run Text="{DynamicResource Filter_Favorites}" /><Run Text="  " /><Run Text="{Binding CountFavorites, Mode=OneWay}" FontSize="11" /></TextBlock>
+                    </StackPanel>
+                </RadioButton>
+            </WrapPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{DynamicResource Sort_Label}" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox MinWidth="140" SelectedValuePath="Tag" SelectedValue="{Binding SortMode}">
+                    <ComboBoxItem Content="{DynamicResource Sort_Activity}" Tag="{x:Static vm:SortMode.Activity}" />
+                    <ComboBoxItem Content="{DynamicResource Sort_Name}" Tag="{x:Static vm:SortMode.Name}" />
+                    <ComboBoxItem Content="{DynamicResource Sort_Size}" Tag="{x:Static vm:SortMode.Size}" />
+                </ComboBox>
+            </StackPanel>
+        </Grid>
+
+        <!-- ───────── content ───────── -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="400" MinWidth="280" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="420" />
+            </Grid.ColumnDefinitions>
+
+            <!-- list -->
+            <Grid>
+                <ListBox x:Name="ItemsList" ItemsSource="{Binding VisibleItems}" SelectedItem="{Binding SelectedItem}"
+                         ItemContainerStyle="{StaticResource ItemRow}" BorderThickness="0" Background="Transparent" Padding="8,0,4,8"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                         VirtualizingPanel.ScrollUnit="Pixel"
+                         AutomationProperties.Name="{DynamicResource List_Name}">
+                    <ListBox.InputBindings>
+                        <KeyBinding Key="Enter" Command="{Binding RunCommand}" />
+                        <KeyBinding Key="Delete" Command="{Binding UninstallCommand}" />
+                    </ListBox.InputBindings>
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:ItemViewModel}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Width="34" Height="34" CornerRadius="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                        Background="{Binding IconKey, Converter={StaticResource Tile}, ConverterParameter=brush}">
+                                    <TextBlock Text="{Binding IconKey, Converter={StaticResource Tile}}"
+                                               FontFamily="{Binding IconKey, Converter={StaticResource Tile}, ConverterParameter=font}"
+                                               Foreground="White" FontWeight="SemiBold" FontSize="13"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="230" />
+                                        <Ellipse Width="8" Height="8" Margin="7,1,0,0" Fill="{DynamicResource SystemFillColorSuccessBrush}"
+                                                 Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}"
+                                                 ToolTip="{DynamicResource Item_Running}" />
+                                        <Ellipse Width="8" Height="8" Margin="6,1,0,0" Fill="{DynamicResource SystemFillColorCautionBrush}"
+                                                 Visibility="{Binding HasUnsavedWork, Converter={StaticResource BoolToVis}}"
+                                                 ToolTip="{Binding AttentionText}" />
+                                        <TextBlock Text="&#xE735;" Style="{StaticResource Icon}" FontSize="10" Margin="6,1,0,0"
+                                                   Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                                                   Visibility="{Binding IsFavorite, Converter={StaticResource BoolToVis}}" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding SubtitleText}" Style="{StaticResource Muted}" FontSize="11.5" Margin="0,1,0,0" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                        <ItemsControl ItemsSource="{Binding Badges}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Style="{StaticResource Badge}">
+                                                        <TextBlock Text="{Binding}" Style="{StaticResource BadgeText}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="{Binding ForgottenText}" FontSize="11" FontStyle="Italic" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                                   Visibility="{Binding IsForgotten, Converter={StaticResource BoolToVis}}" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="8,0,4,0">
+                                    <TextBlock Text="{Binding SizeText}" Style="{StaticResource Muted}" HorizontalAlignment="Right" />
+                                    <TextBlock Text="{Binding ActivityText}" Style="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Right"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock Text="{DynamicResource List_NoMatches}" Style="{StaticResource Muted}" HorizontalAlignment="Center" Margin="0,40,0,0"
+                           Visibility="{Binding HasNoMatches, Converter={StaticResource BoolToVis}}" />
+            </Grid>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Center" VerticalAlignment="Stretch" Background="Transparent"
+                          ResizeBehavior="PreviousAndNext" Focusable="False" />
+            <Rectangle Grid.Column="1" Width="1" Fill="{DynamicResource DividerStrokeColorDefaultBrush}" IsHitTestVisible="False" />
+
+            <!-- detail -->
+            <Grid Grid.Column="2" Margin="20,0,16,8" DataContext="{Binding SelectedItem}"
+                  Visibility="{Binding Converter={StaticResource NullToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" MinHeight="140" />
+                </Grid.RowDefinitions>
+
+                <!-- header -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="48" Height="48" CornerRadius="10" Margin="0,2,14,0" VerticalAlignment="Top"
+                            Background="{Binding IconKey, Converter={StaticResource Tile}, ConverterParameter=brush}">
+                        <TextBlock Text="{Binding IconKey, Converter={StaticResource Tile}}"
+                                   FontFamily="{Binding IconKey, Converter={StaticResource Tile}, ConverterParameter=font}"
+                                   Foreground="White" FontWeight="SemiBold" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Grid.Column="1">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Name}" FontFamily="{StaticResource DisplayFont}" FontSize="22" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <Border Style="{StaticResource Badge}" Margin="10,4,0,0">
+                                <TextBlock Text="{Binding KindText}" Style="{StaticResource BadgeText}" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Visibility="{Binding Description, Converter={StaticResource NullToVis}}" />
+                        <WrapPanel Margin="0,6,0,0" Visibility="{Binding HasTags, Converter={StaticResource BoolToVis}}">
+                            <ItemsControl ItemsSource="{Binding Tags}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource Badge}" Background="{DynamicResource SystemFillColorAttentionBackgroundBrush}">
+                                            <TextBlock Style="{StaticResource BadgeText}"><Run Text="#" /><Run Text="{Binding Mode=OneWay}" /></TextBlock>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontStyle="Italic" Margin="0,6,0,0" Style="{StaticResource Muted}"
+                                   Visibility="{Binding Note, Converter={StaticResource NullToVis}}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" VerticalAlignment="Top" Command="{Binding DataContext.ToggleFavoriteCommand, ElementName=Root}" CommandParameter="{Binding}"
+                            ToolTip="{DynamicResource Action_Favorite}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource IconButton}">
+                                <Setter Property="Content" Value="&#xE734;" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                                        <Setter Property="Content" Value="&#xE735;" />
+                                        <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </Grid>
+
+                <!-- actions -->
+                <WrapPanel Grid.Row="1" Margin="-6,12,0,4">
+                    <Button Style="{StaticResource SubtleButton}" Command="{Binding DataContext.OpenFolderCommand, ElementName=Root}" ToolTip="Ctrl+O"
+                            IsEnabled="{Binding CanOpenFolder}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE838;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Action_OpenFolder}" /></StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SubtleButton}" Command="{Binding DataContext.OpenTerminalCommand, ElementName=Root}" ToolTip="Ctrl+T"
+                            IsEnabled="{Binding CanOpenFolder}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE756;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Action_Terminal}" /></StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SubtleButton}" Command="{Binding DataContext.OpenInVsCodeCommand, ElementName=Root}"
+                            Visibility="{Binding DataContext.IsVsCodeAvailable, ElementName=Root, Converter={StaticResource BoolToVis}}"
+                            IsEnabled="{Binding IsProject}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE943;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Action_VsCode}" /></StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SubtleButton}" Command="{Binding DataContext.BeginEditMetaCommand, ElementName=Root}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8EC;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Action_TagsNote}" /></StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SubtleButton}" Command="{Binding DataContext.CleanupCommand, ElementName=Root}"
+                            Visibility="{Binding HasArtifacts, Converter={StaticResource BoolToVis}}" ToolTip="{Binding ArtifactsText}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE75C;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Action_Cleanup}" /></StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SubtleButton}" Command="{Binding DataContext.UninstallCommand, ElementName=Root}" ToolTip="Del"
+                            Foreground="{DynamicResource SystemFillColorCriticalBrush}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74D;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Action_Uninstall}" FontWeight="SemiBold" /></StackPanel>
+                    </Button>
+                </WrapPanel>
+
+                <!-- info card -->
+                <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,6,0,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="{DynamicResource Detail_Path}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,16,2" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Style="{StaticResource LinkButton}" Command="{Binding DataContext.OpenFolderCommand, ElementName=Root}"
+                                    ToolTip="{DynamicResource Action_OpenFolder}" IsEnabled="{Binding CanOpenFolder}">
+                                <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" MaxWidth="560" />
+                            </Button>
+                            <Button Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="12" Content="&#xE8C8;"
+                                    Command="{Binding DataContext.CopyPathCommand, ElementName=Root}" ToolTip="{DynamicResource Action_CopyPath}" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1" Text="{DynamicResource Detail_Link}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,16,2"
+                                   Visibility="{Binding LinkUri, Converter={StaticResource NullToVis}}" />
+                        <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource LinkButton}" Command="{Binding DataContext.OpenLinkCommand, ElementName=Root}"
+                                Visibility="{Binding LinkUri, Converter={StaticResource NullToVis}}" ToolTip="{Binding LinkUri}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding LinkText}" />
+                                <TextBlock Text="&#xE8A7;" Style="{StaticResource Icon}" FontSize="11" Margin="6,1,0,0" />
+                            </StackPanel>
+                        </Button>
+
+                        <TextBlock Grid.Row="2" Text="{DynamicResource Detail_Info}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,4,16,2" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding MetaText}" Style="{StaticResource Muted}" Margin="0,4,0,2" />
+
+                        <!-- git -->
+                        <TextBlock Grid.Row="3" Text="Git" Style="{StaticResource Caption}" VerticalAlignment="Top" Margin="0,12,16,0"
+                                   Visibility="{Binding HasGit, Converter={StaticResource BoolToVis}}" />
+                        <Grid Grid.Row="3" Grid.Column="1" Margin="0,8,0,0" Visibility="{Binding HasGit, Converter={StaticResource BoolToVis}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <WrapPanel>
+                                    <Border Style="{StaticResource Badge}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE8AB;" Style="{StaticResource Icon}" FontSize="10" Margin="0,1,4,0" />
+                                            <TextBlock Text="{Binding BranchText}" Style="{StaticResource BadgeText}" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                    <TextBlock Text="{Binding AheadBehindText}" Style="{StaticResource Mono}" VerticalAlignment="Center" Margin="6,0,12,0" />
+                                    <TextBlock Text="{Binding WorkingTreeText}" Style="{StaticResource Muted}" VerticalAlignment="Center" />
+                                </WrapPanel>
+                                <TextBlock Text="{Binding AttentionText}" Margin="0,5,0,0" FontWeight="SemiBold" FontSize="12"
+                                           Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                                           Visibility="{Binding HasUnsavedWork, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Text="{Binding LastCommitText}" Style="{StaticResource Muted}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                <Button Style="{StaticResource IconButton}" Content="&#xE895;" Command="{Binding DataContext.RefreshItemCommand, ElementName=Root}"
+                                        ToolTip="{DynamicResource Git_Fetch}" Margin="0,0,4,0" />
+                                <Button Style="{StaticResource OutlineButton}" Command="{Binding DataContext.PullCommand, ElementName=Root}"
+                                        ToolTip="git pull --ff-only">
+                                    <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE896;" Style="{StaticResource Icon}" Margin="0,0,7,0" /><TextBlock Text="{DynamicResource Git_Pull}" /></StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- tags / note editor -->
+                <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,8,0,0"
+                        Visibility="{Binding DataContext.IsEditingMeta, ElementName=Root, Converter={StaticResource BoolToVis}}">
+                    <Grid DataContext="{Binding DataContext, ElementName=Root}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="{DynamicResource Meta_Tags}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                        <TextBox Grid.Column="1" Text="{Binding EditTagsText, UpdateSourceTrigger=PropertyChanged}" ToolTip="{DynamicResource Meta_TagsHint}" />
+                        <TextBlock Grid.Row="1" Text="{DynamicResource Meta_Note}" Style="{StaticResource Caption}" VerticalAlignment="Top" Margin="0,14,16,0" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Margin="0,8,0,0" Text="{Binding EditNoteText, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="120" VerticalScrollBarVisibility="Auto" />
+                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                            <Button Style="{StaticResource SubtleButton}" Content="{DynamicResource Common_Cancel}" Command="{Binding CancelEditMetaCommand}" Margin="0,0,8,0" IsCancel="False" />
+                            <Button Style="{StaticResource PrimaryButton}" Content="{DynamicResource Common_Save}" Command="{Binding SaveMetaCommand}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- run area -->
+                <Grid Grid.Row="4" Margin="0,14,0,8" Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVis}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal">
+                        <!-- Run (split) -->
+                        <StackPanel Orientation="Horizontal" Visibility="{Binding IsRunning, Converter={StaticResource InvBoolToVis}}">
+                            <Button Style="{StaticResource PrimaryButton}" Command="{Binding DataContext.RunCommand, ElementName=Root}" Padding="18,9"
+                                    ToolTip="Enter">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE768;" Style="{StaticResource Icon}" Margin="0,0,8,0" />
+                                    <TextBlock Text="{DynamicResource Run_Button}" FontSize="14" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <!-- Stop -->
+                        <Button Style="{StaticResource DangerButton}" Command="{Binding DataContext.StopCommand, ElementName=Root}" Padding="18,9"
+                                ToolTip="Ctrl+." Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE71A;" Style="{StaticResource Icon}" Margin="0,0,8,0" />
+                                <TextBlock Text="{DynamicResource Run_Stop}" FontSize="14" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="ProfilesButton" Style="{StaticResource OutlineButton}" Margin="6,0,0,0" Padding="10,9" Click="ProfilesButton_Click"
+                                ToolTip="{DynamicResource Run_Profiles}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{DynamicResource Run_Profiles}" />
+                                <TextBlock Text="&#xE70D;" Style="{StaticResource Icon}" FontSize="10" Margin="8,1,0,0" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource Mono}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   ToolTip="{Binding DefaultCommandText}">
+                            <Run Text="$ " Foreground="{DynamicResource TextFillColorTertiaryBrush}" /><Run Text="{Binding DefaultCommandText, Mode=OneWay}" />
+                        </TextBlock>
+                        <!-- detected URLs of the selected run -->
+                        <ItemsControl ItemsSource="{Binding SelectedRun.Urls}" Margin="0,4,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Style="{StaticResource OutlineButton}" Padding="8,3" Margin="0,0,6,0"
+                                            Command="{Binding DataContext.OpenUrlCommand, ElementName=Root}" CommandParameter="{Binding}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse Width="6" Height="6" Fill="{DynamicResource SystemFillColorSuccessBrush}" Margin="0,1,6,0" />
+                                            <TextBlock Text="{Binding OriginalString}" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                            <TextBlock Text="&#xE8A7;" Style="{StaticResource Icon}" FontSize="10" Margin="6,1,0,0" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Grid>
+
+                <!-- console -->
+                <Grid Grid.Row="5">
+                    <TextBlock Text="{DynamicResource Run_NoRuns}" Style="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0"
+                               Visibility="{Binding HasRuns, Converter={StaticResource InvBoolToVis}}" />
+                    <TabControl ItemsSource="{Binding Runs}" SelectedItem="{Binding SelectedRun}" Padding="0"
+                                Visibility="{Binding HasRuns, Converter={StaticResource BoolToVis}}">
+                        <TabControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:RunSessionViewModel}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="7" Height="7" Margin="0,1,7,0">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                                        <Setter Property="Fill" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                                    <Button Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="9" Margin="8,0,-4,0" Content="&#xE8BB;"
+                                            Command="{Binding DataContext.CloseRunCommand, ElementName=Root}" CommandParameter="{Binding}"
+                                            ToolTip="{DynamicResource Run_CloseTab}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </TabControl.ItemTemplate>
+                        <TabControl.ContentTemplate>
+                            <DataTemplate DataType="{x:Type vm:RunSessionViewModel}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid Margin="4,6,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding CommandLine}" Style="{StaticResource Mono}" TextTrimming="CharacterEllipsis"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{Binding StatusText}" Style="{StaticResource Muted}" FontSize="11" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                            <ToggleButton IsChecked="{Binding AutoScroll}" Padding="8,4" Margin="0,0,4,0" ToolTip="{DynamicResource Console_AutoScroll}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE74B;" Style="{StaticResource Icon}" FontSize="12" Margin="0,0,6,0" />
+                                                    <TextBlock Text="{DynamicResource Console_AutoScrollShort}" FontSize="12" />
+                                                </StackPanel>
+                                            </ToggleButton>
+                                            <Button Style="{StaticResource IconButton}" Content="&#xE8C8;" Command="{Binding CopyCommand}" ToolTip="{DynamicResource Console_Copy}" />
+                                            <Button Style="{StaticResource IconButton}" Content="&#xE894;" Command="{Binding ClearCommand}" ToolTip="{DynamicResource Console_Clear}" />
+                                            <Button Style="{StaticResource IconButton}" Content="&#xE71A;" Command="{Binding StopCommand}" ToolTip="{DynamicResource Run_Stop}"
+                                                    Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                                                    Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <Border Grid.Row="1" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                            Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}">
+                                        <ListBox ItemsSource="{Binding Lines}" views:ConsoleAutoScroll.Session="{Binding}"
+                                                 ItemContainerStyle="{StaticResource ConsoleLine}" BorderThickness="0" Background="Transparent" Padding="0,6"
+                                                 SelectionMode="Extended"
+                                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                                 AutomationProperties.Name="{DynamicResource Console_Name}">
+                                            <ListBox.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <VirtualizingStackPanel />
+                                                </ItemsPanelTemplate>
+                                            </ListBox.ItemsPanel>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Text}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsError}" Value="True">
+                                                                        <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Border>
+                                    <Grid Grid.Row="2" Margin="0,6,0,0" Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}" FontFamily="{StaticResource MonoFont}"
+                                                 AutomationProperties.Name="{DynamicResource Console_Input}" ToolTip="{DynamicResource Console_Input}">
+                                            <TextBox.InputBindings>
+                                                <KeyBinding Key="Enter" Command="{Binding SendInputCommand}" />
+                                            </TextBox.InputBindings>
+                                        </TextBox>
+                                        <Button Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE724;" Margin="4,0,0,0"
+                                                Command="{Binding SendInputCommand}" ToolTip="{DynamicResource Console_Send}" />
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </TabControl.ContentTemplate>
+                    </TabControl>
+                </Grid>
+            </Grid>
+
+            <!-- nothing selected -->
+            <StackPanel Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Visibility="{Binding SelectedItem, Converter={StaticResource NullToVis}, ConverterParameter=invert}">
+                <TextBlock Text="&#xE8A9;" Style="{StaticResource Icon}" FontSize="40" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <TextBlock Text="{DynamicResource Detail_NothingSelected}" Style="{StaticResource Muted}" Margin="0,12,0,0" HorizontalAlignment="Center" />
+                <TextBlock Text="{DynamicResource Detail_ShortcutsHint}" Style="{StaticResource Muted}" Margin="0,6,0,0" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" FontSize="11" />
+            </StackPanel>
+
+            <!-- empty state (first launch) -->
+            <Border Grid.ColumnSpan="3" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                    Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+                    <Image Source="pack://application:,,,/Tezgah;component/Assets/tezgah.ico" Width="72" Height="72" />
+                    <TextBlock Text="{DynamicResource Empty_Title}" FontFamily="{StaticResource DisplayFont}" FontSize="26" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" Margin="0,18,0,8" />
+                    <TextBlock Text="{DynamicResource Empty_Body}" TextWrapping="Wrap" TextAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" LineHeight="20" />
+                    <Button Style="{StaticResource PrimaryButton}" Command="{Binding ScanCommand}" HorizontalAlignment="Center" Margin="0,24,0,0" Padding="24,11">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" Margin="0,0,10,0" />
+                            <TextBlock Text="{DynamicResource Empty_ScanButton}" FontSize="15" />
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Text="{DynamicResource Empty_Privacy}" Style="{StaticResource Muted}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,16,0,0" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ───────── status bar ───────── -->
+        <Border Grid.Row="3" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}" Padding="16,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding StatusText}" Style="{StaticResource Muted}" VerticalAlignment="Center" />
+                <Border Grid.Column="1" HorizontalAlignment="Center" CornerRadius="4" Padding="10,2" Margin="16,0"
+                        Visibility="{Binding Notification, Converter={StaticResource NullToVis}}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{DynamicResource SystemFillColorAttentionBackgroundBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding NotificationIsError}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Notification}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="600" />
+                        <Button Style="{StaticResource IconButton}" Width="20" Height="20" FontSize="8" Content="&#xE8BB;" Margin="8,0,-6,0"
+                                Command="{Binding DismissNotificationCommand}" />
+                    </StackPanel>
+                </Border>
+                <TextBlock Grid.Column="2" Text="{Binding LastScanText}" Style="{StaticResource Muted}" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>
