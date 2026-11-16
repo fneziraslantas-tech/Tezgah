@@ -29,8 +29,14 @@ public sealed record UninstallStep
     public CommandSpec? Command { get; init; }
     public long? SizeBytes { get; init; }
 
-    /// <summary>Optional steps are pre-selected but the user may untick them (e.g. related venv elsewhere).</summary>
+    /// <summary>Optional steps can be unticked by the user (e.g. related venv elsewhere).</summary>
     public bool Optional { get; init; }
+
+    /// <summary>
+    /// Initial tick state of an optional step. False for steps whose ownership or contents are uncertain (installed-app
+    /// leftovers, name-matched virtualenvs): the user has to opt in.
+    /// </summary>
+    public bool DefaultSelected { get; init; } = true;
 }
 
 public enum WarningLevel
@@ -63,6 +69,9 @@ public sealed record StepOutcome(UninstallStep Step, bool Success, string? Error
 public sealed record UninstallResult(IReadOnlyList<StepOutcome> Outcomes)
 {
     public bool Success => Outcomes.All(o => o.Success);
+
+    /// <summary>Set when the work was done but its audit record could not be written.</summary>
+    public string? AuditWarning { get; init; }
 }
 
 public enum PathOperation

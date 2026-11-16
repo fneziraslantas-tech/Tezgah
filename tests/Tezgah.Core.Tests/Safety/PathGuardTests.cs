@@ -189,6 +189,25 @@ public class PathGuardTests
         Assert.False(guard.Check(dir.Path, PathOperation.Delete, DeletePolicy.InstalledAppLeftovers).Allowed);
     }
 
+    [Theory]
+    [InlineData("Common Files")]
+    [InlineData("Common Files", "Vendor")]
+    [InlineData("dotnet")]
+    [InlineData("WindowsApps")]
+    [InlineData("Microsoft")]
+    [InlineData("Package Cache", "{guid}")]
+    [InlineData("Windows NT", "Accessories")]
+    public void Shared_install_folders_are_never_installed_app_leftovers(params string[] parts)
+    {
+        using var dir = new TempDir();
+        var root = dir.Sub("ProgramData");
+        var shared = dir.Sub(["ProgramData", .. parts]);
+        var guard = new PathGuard(new PathGuardOptions { InstallRoots = [root] });
+
+        Assert.False(guard.Check(shared, PathOperation.Delete, DeletePolicy.InstalledAppLeftovers).Allowed);
+        Assert.True(guard.Check(dir.Sub("ProgramData", "Vendor App"), PathOperation.Delete, DeletePolicy.InstalledAppLeftovers).Allowed);
+    }
+
     [Fact]
     public void Ancestors_of_protected_folders_are_denied()
     {

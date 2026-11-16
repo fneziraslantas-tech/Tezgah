@@ -41,6 +41,12 @@ public interface IGitClient
 
     /// <summary>Fast-forward only pull.</summary>
     Task<CommandResult> PullAsync(string repoPath, CancellationToken ct);
+
+    /// <summary>
+    /// Gitignored, untracked paths (ignored directories collapsed to one entry). Used only when planning a deletion:
+    /// such files (.env, local databases, keys) exist nowhere else. Empty when unknown.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetIgnoredPathsAsync(string repoPath, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>([]);
 }
 
 // ───────────────────────────── Execution layer ─────────────────────────────

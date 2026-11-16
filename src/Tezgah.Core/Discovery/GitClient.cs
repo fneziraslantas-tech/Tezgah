@@ -206,6 +206,24 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         return await RunHardenedAsync(repoPath, PullTimeout, [], ct, "pull", "--ff-only").ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<string>> GetIgnoredPathsAsync(string repoPath, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoPath);
+        if (!await IsAvailableAsync(ct).ConfigureAwait(false) || !GitRepoGuard.TryResolveLocalGitDir(repoPath, out _, out _))
+        {
+            return [];
+        }
+
+        var filters = await ReadFilterDriversAsync(repoPath, ct).ConfigureAwait(false);
+        if (filters is null)
+        {
+            return [];
+        }
+
+        var r = await RunHardenedAsync(repoPath, LocalTimeout, filters, ct, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z").ConfigureAwait(false);
+        return r.Success ? r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries).Take(5_000).ToList() : [];
+    }
+
     internal static (DateTimeOffset? At, string? Subject) ParseLog(string output)
     {
         var line = output.TrimEnd('\r', '\n');

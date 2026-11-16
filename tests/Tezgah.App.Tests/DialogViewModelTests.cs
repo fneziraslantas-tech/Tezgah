@@ -6,6 +6,19 @@ namespace Tezgah.App.Tests;
 public class DialogViewModelTests
 {
     [Fact]
+    public void Opt_in_uninstall_steps_start_unticked()
+    {
+        static Tezgah.Core.Model.UninstallStep Step(bool optional, bool defaultSelected) => new()
+        {
+            Kind = Tezgah.Core.Model.UninstallStepKind.RemoveDirectory, Description = "x", Optional = optional, DefaultSelected = defaultSelected,
+        };
+
+        Assert.False(new UninstallStepViewModel(Step(true, false), new KeyStrings(), () => { }).IsSelected);
+        Assert.True(new UninstallStepViewModel(Step(true, true), new KeyStrings(), () => { }).IsSelected);
+        Assert.True(new UninstallStepViewModel(Step(false, false), new KeyStrings(), () => { }).IsSelected); // mandatory
+    }
+
+    [Fact]
     public async Task Repo_with_unpushed_work_requires_typed_name()
     {
         var h = new Harness();

@@ -34,6 +34,21 @@ internal sealed partial class PathGuard : IPathGuard
         _profilesRoot = options.ProfilesRoot is { } root ? Canonicalize([root]).FirstOrDefault() : null;
     }
 
+    /// <summary>
+    /// Folders directly under an install root (Program Files, Program Files (x86), ProgramData) that hold many vendors'
+    /// products. Nothing in or under them is ever deleted as an installed-app leftover, whatever a registry entry claims.
+    /// </summary>
+    internal static readonly HashSet<string> SharedInstallFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Common Files", "dotnet", "WindowsApps", "ModifiableWindowsApps", "WindowsPowerShell", "Microsoft", "Microsoft SDKs",
+        "Microsoft Visual Studio", "Microsoft Office", "Microsoft SQL Server", "Microsoft Analysis Services", "Microsoft.NET",
+        "Reference Assemblies", "Windows Kits", "MSBuild", "IIS", "IIS Express", "Internet Explorer", "Package Cache",
+        "Packages", "chocolatey", "Uninstall Information", "Application Verifier", "dotnet-core-uninstall",
+    };
+
+    /// <summary>Install roots this guard protects (canonical forms).</summary>
+    internal IReadOnlyList<string> InstallRoots => _installRoots;
+
     /// <summary>Guard built from the current environment (used by <see cref="Execution.ShellOpener"/>).</summary>
     public static PathGuard Default => LazyDefault.Value;
 
@@ -227,6 +242,17 @@ internal sealed partial class PathGuard : IPathGuard
                 return L.T(
                     $"{root} altındaki klasörler yalnızca kurulu uygulama kalıntısı olarak silinebilir.",
                     $"Folders under {root} can only be deleted as installed-app leftovers.");
+            }
+
+            if (IsStrictlyUnder(path, root))
+            {
+                var first = path[(root.Length + 1)..].Split('\\', StringSplitOptions.RemoveEmptyEntries)[0];
+                if (SharedInstallFolders.Contains(first) || first.StartsWith("Windows ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return L.T(
+                        $"Birçok ürünün paylaştığı klasör: {Path.Combine(root, first)}",
+                        $"Folder shared by many products: {Path.Combine(root, first)}");
+                }
             }
         }
 

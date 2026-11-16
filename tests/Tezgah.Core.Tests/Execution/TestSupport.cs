@@ -141,13 +141,21 @@ internal sealed class FakeGitClient(GitInfo? info) : IGitClient
 {
     public List<(string Path, bool Fetch)> Calls { get; } = [];
 
+    public GitInfo? Info { get; set; } = info;
+
+    public Dictionary<string, GitInfo?> ByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyList<string> Ignored { get; set; } = [];
+
     public Task<bool> IsAvailableAsync(CancellationToken ct) => Task.FromResult(true);
 
     public Task<GitInfo?> GetInfoAsync(string repoPath, bool fetch, CancellationToken ct)
     {
         Calls.Add((repoPath, fetch));
-        return Task.FromResult(info);
+        return Task.FromResult(ByPath.TryGetValue(repoPath, out var specific) ? specific : Info);
     }
+
+    public Task<IReadOnlyList<string>> GetIgnoredPathsAsync(string repoPath, CancellationToken ct) => Task.FromResult(Ignored);
 
     public Task<CommandResult> PullAsync(string repoPath, CancellationToken ct) => Task.FromResult(new CommandResult(0, "", "", false));
 }

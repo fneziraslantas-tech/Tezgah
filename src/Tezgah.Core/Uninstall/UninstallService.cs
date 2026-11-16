@@ -1,7 +1,13 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Tezgah.Core.Abstractions;
+using Tezgah.Core.Discovery;
 using Tezgah.Core.Execution;
+using Tezgah.Core.Interop;
 using Tezgah.Core.Model;
 using Tezgah.Core.Safety;
 
@@ -24,19 +30,26 @@ public sealed class UninstallConfirmationException : InvalidOperationException
         : base(message, innerException)
     {
     }
+
+    /// <summary>True when the folder changed after planning (new unsaved work): the caller should re-plan.</summary>
+    public bool PlanChanged { get; init; }
 }
 
 /// <summary>
 /// Builds and executes uninstall plans. Safety properties:
 /// <list type="bullet">
-/// <item>Only plans produced by <see cref="PlanAsync"/> of this instance are executed (a forged/modified plan is refused).</item>
-/// <item>Blocked plans never run; Danger plans need the item name typed exactly.</item>
+/// <item>Only plans produced by <see cref="PlanAsync"/> of this instance are executed. The plan's steps, warnings and
+/// confirmation requirement are snapshotted at planning time and execution uses that snapshot only.</item>
+/// <item>Blocked plans never run; Danger plans need the item name typed exactly. Folder plans re-read the git state right
+/// before running: new unsaved work makes the execution refuse and ask for a new plan.</item>
 /// <item>The path guard is re-run immediately before every deletion (inside <see cref="FileRemover"/> as well).</item>
+/// <item>Installed-app leftovers are only offered for folders that verifiably belong to the app (opt-in), are re-checked
+/// after the vendor uninstaller ran, and are never deleted while the uninstaller still appears unfinished.</item>
 /// <item>Steps run sequentially and stop at the first failing mandatory step; the catalog entry is removed last.</item>
-/// <item>Every execution is written to the audit log, including failures and cancellations.</item>
+/// <item>An audit entry is written before anything is touched (no audit, no deletion) and another one at the end.</item>
 /// </list>
 /// </summary>
-internal sealed class UninstallService(
+internal sealed partial class UninstallService(
     ICatalogService catalog,
     IGitClient git,
     PathGuard guard,
@@ -49,6 +62,19 @@ internal sealed class UninstallService(
     /// <summary>Exit codes that mean "uninstalled" for MSI/vendor uninstallers (3010/1641 = reboot required/initiated).</summary>
     private static readonly int[] SuccessExitCodes = [0, 3010, 1641];
 
+    /// <summary>Signs of user data that must never be swept away as "leftovers".</summary>
+    private static readonly HashSet<string> DataMarkerFiles = new(StringComparer.OrdinalIgnoreCase) { "PG_VERSION", "postmaster.pid", "ibdata1", "my.ini", ".git" };
+    private static readonly HashSet<string> DataMarkerDirectories = new(StringComparer.OrdinalIgnoreCase) { "data", "db", "database", "databases", "backup", "backups", ".git" };
+    private static readonly string[] DataMarkerExtensions = [".mdf", ".ldf", ".db", ".sqlite", ".sqlite3", ".kdbx"];
+
+    /// <summary>Regenerable folders never reported as "ignored local files".</summary>
+    private static readonly HashSet<string> RegenerableDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node_modules", "bin", "obj", ".venv", "venv", "env", "__pycache__", "target", "dist", "build", "out", ".gradle", ".next",
+        ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache", "coverage", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+        ".vs", ".idea", ".cache", "packages",
+    };
+
     private readonly ConditionalWeakTable<UninstallPlan, PlanContext> _issuedPlans = [];
     private readonly AuditLog _audit = new(options.AuditLogPath);
 
@@ -60,6 +86,7 @@ internal sealed class UninstallService(
         var recycle = catalog.State.Settings.UseRecycleBin;
         var steps = new List<UninstallStep>();
         var warnings = new List<PlanWarning>();
+        string? uninstallerUnderLocation = null;
 
         switch (item.Kind)
         {
@@ -68,7 +95,7 @@ internal sealed class UninstallService(
                 await PlanFolderAsync(item, recycle, steps, warnings, ct).ConfigureAwait(false);
                 break;
             case ItemKind.InstalledApp:
-                PlanInstalledApp(item, recycle, steps, warnings);
+                uninstallerUnderLocation = PlanInstalledApp(item, recycle, steps, warnings, ct);
                 break;
             case ItemKind.PackageTool:
                 PlanPackageTool(item, recycle, steps, warnings);
@@ -84,8 +111,22 @@ internal sealed class UninstallService(
             Description = L.T("Tezgah listesinden çıkar", "Remove from the Tezgah list"),
         });
 
-        var plan = new UninstallPlan { ItemId = item.Id, ItemName = item.Name, Steps = steps, Warnings = warnings };
-        _issuedPlans.AddOrUpdate(plan, new PlanContext(item.Kind, item.Path, recycle));
+        // Immutable snapshot: the lists handed out cannot be cast back and edited, and execution only uses the copy below.
+        var frozenSteps = steps.ToImmutableArray();
+        var frozenWarnings = warnings.ToImmutableArray();
+        var plan = new UninstallPlan { ItemId = item.Id, ItemName = item.Name, Steps = frozenSteps, Warnings = frozenWarnings };
+        _issuedPlans.AddOrUpdate(plan, new PlanContext(
+            item.Kind,
+            item.Path,
+            item.WebUrl,
+            recycle,
+            item.Id,
+            item.Name,
+            frozenSteps,
+            frozenWarnings.Any(w => w.Level == WarningLevel.Blocker),
+            frozenWarnings.Any(w => w.Level == WarningLevel.Danger),
+            frozenWarnings.Where(w => w.Level == WarningLevel.Danger).Select(w => w.Message).ToImmutableHashSet(StringComparer.Ordinal),
+            uninstallerUnderLocation));
         return plan;
     }
 
@@ -101,24 +142,52 @@ internal sealed class UninstallService(
                 "This plan was not produced by Tezgah or has been modified; create a new plan."));
         }
 
-        if (plan.IsBlocked)
+        if (context.Blocked)
         {
             throw new InvalidOperationException(L.T("Plan engellendi; kaldırma yapılamaz.", "The plan is blocked; nothing can be removed."));
         }
 
-        if (plan.RequiresTypedConfirmation
-            && !string.Equals(typedConfirmation?.Trim(), plan.ItemName.Trim(), StringComparison.Ordinal))
+        if (context.RequiresTypedConfirmation
+            && !string.Equals(typedConfirmation?.Trim(), context.ItemName.Trim(), StringComparison.Ordinal))
         {
             throw new UninstallConfirmationException();
+        }
+
+        // The dialog may have been open for a long time: re-read the folder's state before anything is touched.
+        if (context.Kind is ItemKind.GitRepository or ItemKind.ProjectFolder && context.ItemPath is not null && Directory.Exists(context.ItemPath))
+        {
+            var fresh = await ComputeFolderSafetyWarningsAsync(context.Kind, Path.TrimEndingDirectorySeparator(Path.GetFullPath(context.ItemPath)), context.WebUrl, ct).ConfigureAwait(false);
+            if (fresh.Any(w => w.Level == WarningLevel.Danger && !context.DangerMessages.Contains(w.Message)))
+            {
+                _issuedPlans.Remove(plan);
+                throw new UninstallConfirmationException(L.T(
+                    "Plan oluşturulduktan sonra klasörde kaydedilmemiş iş oluştu; plan yeniden oluşturuldu, lütfen tekrar gözden geçirin.",
+                    "Unsaved work appeared in the folder after the plan was made; the plan was refreshed, please review it again."))
+                { PlanChanged = true };
+            }
         }
 
         // Only one execution per plan: a second call must re-plan (state may have changed).
         _issuedPlans.Remove(plan);
 
-        var toRun = plan.Steps.Where(s => !s.Optional || selectedSteps.Contains(s)).ToList();
+        var toRun = context.Steps.Where(s => !s.Optional || selectedSteps.Contains(s)).ToList();
+        var runId = Guid.NewGuid().ToString("N");
+
+        // Intent first: if the audit log cannot be written, nothing is deleted.
+        var started = await _audit.TryWriteAsync(new AuditEntry(
+            DateTimeOffset.Now, "uninstall", context.ItemId, context.ItemName, "started",
+            toRun.Select(s => new AuditStep(s.Kind, s.Path, s.Command?.Display, false, null)).ToList(), null, runId), CancellationToken.None).ConfigureAwait(false);
+        if (started is not null)
+        {
+            throw new InvalidOperationException(L.T(
+                $"Denetim kaydı yazılamadı; hiçbir şey silinmedi: {started}",
+                $"The audit log could not be written; nothing was removed: {started}"));
+        }
+
         var outcomes = new List<StepOutcome>();
         var outcome = "success";
         string? fatal = null;
+        string? auditWarning = null;
         try
         {
             foreach (var step in toRun)
@@ -128,7 +197,7 @@ internal sealed class UninstallService(
                 StepOutcome result;
                 try
                 {
-                    await ExecuteStepAsync(plan, context, step, progress, ct).ConfigureAwait(false);
+                    await ExecuteStepAsync(context, step, progress, ct).ConfigureAwait(false);
                     result = new StepOutcome(step, true, null);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -170,15 +239,22 @@ internal sealed class UninstallService(
             var entry = new AuditEntry(
                 DateTimeOffset.Now,
                 "uninstall",
-                plan.ItemId,
-                plan.ItemName,
+                context.ItemId,
+                context.ItemName,
                 outcome,
                 outcomes.Select(o => new AuditStep(o.Step.Kind, o.Step.Path, o.Step.Command?.Display, o.Success, o.Error)).ToList(),
-                fatal);
-            await _audit.WriteAsync(entry, CancellationToken.None).ConfigureAwait(false);
+                fatal,
+                runId);
+
+            // Never let a failing audit write replace the real outcome (the work is already done).
+            if (await _audit.TryWriteAsync(entry, CancellationToken.None).ConfigureAwait(false) is { } error)
+            {
+                auditWarning = L.T($"Kaldırma yapıldı ama denetim kaydı yazılamadı: {error}", $"Uninstalled, but the audit log could not be written: {error}");
+                progress?.Report(auditWarning);
+            }
         }
 
-        return new UninstallResult(outcomes);
+        return new UninstallResult(outcomes) { AuditWarning = auditWarning };
     }
 
     // ───────────────────────────── planning ─────────────────────────────
@@ -199,33 +275,11 @@ internal sealed class UninstallService(
         }
 
         var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(item.Path));
+        warnings.AddRange(await ComputeFolderSafetyWarningsAsync(item.Kind, path, item.WebUrl, ct).ConfigureAwait(false));
 
-        // Fresh git state, local only (no network fetch).
         if (item.Kind == ItemKind.GitRepository)
         {
-            GitInfo? info;
-            try
-            {
-                info = await git.GetInfoAsync(path, fetch: false, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                info = null;
-            }
-
-            AddGitWarnings(info, warnings);
-        }
-        else if (string.IsNullOrWhiteSpace(item.WebUrl))
-        {
-            warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
-                "Bu klasör sürüm kontrolünde değil ve bilinen bir kaynağı yok — büyük olasılıkla tek kopya bu.",
-                "This folder is not under version control and has no known source — this is probably the only copy.")));
-        }
-        else
-        {
-            warnings.Add(new PlanWarning(WarningLevel.Warning, L.T(
-                $"Git yok; yeniden indirilebilir ({item.WebUrl}) ama yerel değişiklikler kaybolur.",
-                $"No git; it can be downloaded again ({item.WebUrl}) but local changes will be lost.")));
+            await AddIgnoredFileWarningsAsync(path, recycle, warnings, ct).ConfigureAwait(false);
         }
 
         AddStopProcessesStep(item.Id, path, steps, warnings);
@@ -244,18 +298,19 @@ internal sealed class UninstallService(
             warnings.Add(new PlanWarning(WarningLevel.Warning, L.T("Silme kalıcı olacak (Geri Dönüşüm Kutusu kapalı).", "Deletion is permanent (Recycle Bin is turned off).")));
         }
 
-        foreach (var shortcut in FindShortcutsInto(path, ct))
+        foreach (var (shortcut, target) in FindShortcutsInto(path, ct))
         {
             steps.Add(new UninstallStep
             {
                 Kind = UninstallStepKind.RemoveShortcut,
                 Path = shortcut,
                 Optional = true,
-                Description = L.T($"Kısayolu kaldır: {Path.GetFileName(shortcut)}", $"Remove shortcut: {Path.GetFileName(shortcut)}"),
+                Description = L.T($"Kısayolu kaldır: {Path.GetFileName(shortcut)} → {target}", $"Remove shortcut: {Path.GetFileName(shortcut)} → {target}"),
             });
         }
 
-        foreach (var venv in FindRelatedVirtualenvs(item, path))
+        var uncertainVenvs = new List<string>();
+        foreach (var (venv, exact) in FindRelatedVirtualenvs(item, path))
         {
             if (!guard.Check(venv, PathOperation.Delete).Allowed)
             {
@@ -269,18 +324,181 @@ internal sealed class UninstallService(
                 Path = venv,
                 SizeBytes = venvSize,
                 Optional = true,
+                DefaultSelected = exact,
                 Description = L.T(
                     $"İlgili sanal ortamı da kaldır ({FormatBytes(venvSize)}): {venv}",
                     $"Also remove the related virtual environment ({FormatBytes(venvSize)}): {venv}"),
             });
+            if (!exact)
+            {
+                uncertainVenvs.Add(Path.GetFileName(venv));
+            }
+        }
+
+        if (uncertainVenvs.Count > 0)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Warning, L.T(
+                $"Şu sanal ortamların bu projeye ait olduğu yalnızca addan tahmin edildi (seçili değil): {string.Join(", ", uncertainVenvs)}",
+                $"These virtual environments only match by name; ownership could not be verified (not selected): {string.Join(", ", uncertainVenvs)}")));
         }
     }
 
-    private static void AddGitWarnings(GitInfo? info, List<PlanWarning> warnings)
+    /// <summary>
+    /// Warnings that decide whether deleting a project folder needs typed confirmation: the folder's own git state (or the
+    /// lack of version control) plus every nested repository inside it. Used at planning and again right before execution.
+    /// </summary>
+    private async Task<List<PlanWarning>> ComputeFolderSafetyWarningsAsync(ItemKind kind, string path, string? webUrl, CancellationToken ct)
     {
-        if (info is null)
+        var warnings = new List<PlanWarning>();
+        var nested = FindNestedRepositories(path, ct, out var incomplete);
+
+        if (kind == ItemKind.GitRepository)
+        {
+            AddGitWarnings(await ReadGitAsync(path, ct).ConfigureAwait(false), warnings, label: null);
+        }
+        else if (nested.Count > 0)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Warning, L.T(
+                $"Bu klasörün kendisi sürüm kontrolünde değil ama içinde {nested.Count} git deposu var.",
+                $"This folder itself is not under version control but it contains {nested.Count} git repositor(y/ies).")));
+        }
+        else if (string.IsNullOrWhiteSpace(webUrl))
         {
             warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
+                "Bu klasör sürüm kontrolünde değil ve bilinen bir kaynağı yok — büyük olasılıkla tek kopya bu.",
+                "This folder is not under version control and has no known source — this is probably the only copy.")));
+        }
+        else
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Warning, L.T(
+                $"Git yok; yeniden indirilebilir ({webUrl}) ama yerel değişiklikler kaybolur.",
+                $"No git; it can be downloaded again ({webUrl}) but local changes will be lost.")));
+        }
+
+        var clean = new List<string>();
+        foreach (var repo in nested.Take(MaxNestedRepositories))
+        {
+            var relative = Path.GetRelativePath(path, repo);
+            var info = await ReadGitAsync(repo, ct).ConfigureAwait(false);
+            var before = warnings.Count;
+            AddGitWarnings(info, warnings, relative);
+            if (warnings.Count == before)
+            {
+                clean.Add(relative);
+            }
+        }
+
+        if (clean.Count > 0)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Info, L.T(
+                $"İç içe depolar da silinecek: {string.Join(", ", clean.Take(5))}{(clean.Count > 5 ? " …" : string.Empty)}",
+                $"Nested repositories will be deleted too: {string.Join(", ", clean.Take(5))}{(clean.Count > 5 ? " …" : string.Empty)}")));
+        }
+
+        if (incomplete || nested.Count > MaxNestedRepositories)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
+                "Klasörün tamamı iç içe git depoları için taranamadı; kaydedilmemiş iş olup olmadığı doğrulanamadı.",
+                "Not every subfolder could be checked for nested git repositories; unsaved work could not be ruled out.")));
+        }
+
+        return warnings;
+    }
+
+    private const int MaxNestedRepositories = 50;
+
+    private async Task<GitInfo?> ReadGitAsync(string path, CancellationToken ct)
+    {
+        try
+        {
+            return await git.GetInfoAsync(path, fetch: false, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Git repositories strictly inside <paramref name="root"/> (a <c>.git</c> directory or file), including ignored ones git
+    /// status never mentions, plus catalog repositories under it. Links are never followed; the walk is bounded.
+    /// </summary>
+    internal List<string> FindNestedRepositories(string root, CancellationToken ct, out bool incomplete)
+    {
+        const int maxDirectories = 20_000;
+        const int maxDepth = 8;
+        incomplete = false;
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in catalog.State.Items)
+        {
+            if (i.Kind == ItemKind.GitRepository && i.Path is { } p && Path.IsPathFullyQualified(p)
+                && PathGuard.IsStrictlyUnder(Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)), root) && Directory.Exists(p))
+            {
+                found.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)));
+            }
+        }
+
+        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true, RecurseSubdirectories = false };
+        var stack = new Stack<(string Dir, int Depth)>();
+        stack.Push((root, 0));
+        var visited = 0;
+        while (stack.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (dir, depth) = stack.Pop();
+            if (++visited > maxDirectories)
+            {
+                incomplete = true;
+                break;
+            }
+
+            IEnumerable<string> children;
+            try
+            {
+                children = Directory.EnumerateDirectories(dir, "*", options).ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            foreach (var child in children)
+            {
+                var name = Path.GetFileName(child);
+                if (name.Equals(".git", StringComparison.OrdinalIgnoreCase) || name.Equals("node_modules", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (ProjectInspector.IsGitRoot(child))
+                {
+                    found.Add(child);
+                    continue; // its own nested repos are its own business: it is reported as a whole
+                }
+
+                if (depth + 1 < maxDepth)
+                {
+                    stack.Push((child, depth + 1));
+                }
+                else
+                {
+                    incomplete = true;
+                }
+            }
+        }
+
+        return found.Order(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static void AddGitWarnings(GitInfo? info, List<PlanWarning> warnings, string? label)
+    {
+        string Prefix(string tr, string en) => label is null
+            ? L.T(tr, en)
+            : L.T($"İç içe depo '{label}': {tr}", $"Nested repository '{label}': {en}");
+
+        if (info is null)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Danger, Prefix(
                 "Git durumu okunamadı; kaydedilmemiş iş olup olmadığı doğrulanamadı.",
                 "Could not read the git state; unsaved work could not be ruled out.")));
             return;
@@ -288,7 +506,7 @@ internal sealed class UninstallService(
 
         if (string.IsNullOrWhiteSpace(info.RemoteUrl))
         {
-            warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
+            warnings.Add(new PlanWarning(WarningLevel.Danger, Prefix(
                 "Uzak depo (remote) yok — bu deponun tek kopyası bu klasör.",
                 "No remote — this folder is the only copy of the repository.")));
         }
@@ -348,27 +566,117 @@ internal sealed class UninstallService(
                     $"{info.LinkedWorktrees.Count} linked worktree(s) break: {string.Join(", ", info.LinkedWorktrees.Take(3))}"));
             }
 
-            warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
+            warnings.Add(new PlanWarning(WarningLevel.Danger, Prefix(
                 $"Kaydedilmemiş iş kaybolacak: {string.Join(", ", parts)}.",
                 $"Unsaved work will be lost: {string.Join(", ", parts)}.")));
         }
     }
 
-    private void PlanInstalledApp(CatalogItem item, bool recycle, List<UninstallStep> steps, List<PlanWarning> warnings)
+    /// <summary>
+    /// Gitignored files are invisible to <c>git status</c> but may exist only here (.env secrets, local databases, keys).
+    /// Regenerable folders are skipped. Sensitive files make the plan Danger when the Recycle Bin is off.
+    /// </summary>
+    private async Task AddIgnoredFileWarningsAsync(string path, bool recycle, List<PlanWarning> warnings, CancellationToken ct)
+    {
+        IReadOnlyList<string> ignored;
+        try
+        {
+            ignored = await git.GetIgnoredPathsAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return;
+        }
+
+        var (sensitive, other) = ClassifyIgnored(ignored);
+        if (sensitive.Count > 0)
+        {
+            var names = string.Join(", ", sensitive.Take(5)) + (sensitive.Count > 5 ? $" (+{sensitive.Count - 5})" : string.Empty);
+            warnings.Add(new PlanWarning(recycle ? WarningLevel.Warning : WarningLevel.Danger, L.T(
+                $"Git'te olmayan (yok sayılan) önemli yerel dosyalar da silinecek: {names}",
+                $"Ignored local files that are not in git will be deleted too: {names}")));
+        }
+
+        if (other.Count > 0)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Info, L.T(
+                $"{other.Count} yok sayılan (gitignore) yerel öğe yalnızca bu bilgisayarda var: {string.Join(", ", other.Take(3))}",
+                $"{other.Count} gitignored local item(s) exist only on this PC: {string.Join(", ", other.Take(3))}")));
+        }
+    }
+
+    /// <summary>Splits ignored paths into likely-sensitive files and other non-regenerable entries.</summary>
+    internal static (List<string> Sensitive, List<string> Other) ClassifyIgnored(IEnumerable<string> ignored)
+    {
+        var sensitive = new List<string>();
+        var other = new List<string>();
+        foreach (var raw in ignored)
+        {
+            var entry = raw.Replace('\\', '/').TrimEnd('/');
+            if (entry.Length == 0)
+            {
+                continue;
+            }
+
+            var segments = entry.Split('/');
+            if (segments.Any(s => RegenerableDirectories.Contains(s)) || segments[^1].EndsWith(".pyc", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            (IsSensitiveName(segments[^1]) ? sensitive : other).Add(entry);
+        }
+
+        return (sensitive, other);
+    }
+
+    private static bool IsSensitiveName(string name)
+    {
+        var lower = name.ToLowerInvariant();
+        if (lower is ".env.example" or ".env.sample" or ".env.template" or ".env.dist")
+        {
+            return false;
+        }
+
+        return lower == ".env" || lower.StartsWith(".env.", StringComparison.Ordinal) || lower.StartsWith("id_rsa", StringComparison.Ordinal)
+            || lower is "secrets.json" or ".npmrc" or ".pypirc" or "credentials.json"
+            || lower.EndsWith(".pem", StringComparison.Ordinal) || lower.EndsWith(".key", StringComparison.Ordinal)
+            || lower.EndsWith(".pfx", StringComparison.Ordinal) || lower.EndsWith(".p12", StringComparison.Ordinal)
+            || lower.EndsWith(".kdbx", StringComparison.Ordinal) || lower.EndsWith(".sqlite", StringComparison.Ordinal)
+            || lower.EndsWith(".sqlite3", StringComparison.Ordinal) || lower.EndsWith(".db", StringComparison.Ordinal)
+            || lower.EndsWith(".mdf", StringComparison.Ordinal);
+    }
+
+    /// <summary>Plans an installed-app removal. Returns the uninstaller executable when it lives inside the install folder.</summary>
+    private string? PlanInstalledApp(CatalogItem item, bool recycle, List<UninstallStep> steps, List<PlanWarning> warnings, CancellationToken ct)
     {
         if (item.UninstallCommand is null)
         {
             warnings.Add(new PlanWarning(WarningLevel.Blocker, L.T(
                 "Bu uygulamanın kaldırıcısı bulunamadı. Windows Ayarlar › Uygulamalar'ı kullanın.",
                 "No uninstaller was found for this app. Use Windows Settings › Apps.")));
-            return;
+            return null;
         }
 
         var location = item.Path is not null && Path.IsPathFullyQualified(item.Path)
             ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(item.Path))
             : null;
-        var locationUsable = location is not null && guard.Check(location, PathOperation.Delete, DeletePolicy.InstalledAppLeftovers).Allowed;
-        if (locationUsable)
+        string? uninstallerUnder = null;
+        if (location is not null && Path.IsPathFullyQualified(item.UninstallCommand.FileName)
+            && PathGuard.IsSameOrUnder(Path.GetFullPath(item.UninstallCommand.FileName), location))
+        {
+            uninstallerUnder = Path.GetFullPath(item.UninstallCommand.FileName);
+        }
+
+        string? refusal = null;
+        if (location is not null)
+        {
+            var check = guard.Check(location, PathOperation.Delete, DeletePolicy.InstalledAppLeftovers);
+            refusal = check.Allowed ? LeftoverRefusal(item, location, uninstallerUnder is not null, ct) : check.Reason;
+        }
+
+        var owned = location is not null && refusal is null;
+        if (owned)
         {
             AddStopProcessesStep(item.Id, location!, steps, warnings);
         }
@@ -376,25 +684,141 @@ internal sealed class UninstallService(
         steps.Add(new UninstallStep
         {
             Kind = UninstallStepKind.RunCommand,
-            Command = item.UninstallCommand,
+            Command = item.UninstallCommand with { WaitForProcessTree = true },
             Description = L.T($"Uygulamanın kendi kaldırıcısını çalıştır: {item.UninstallCommand.Display}", $"Run the app's own uninstaller: {item.UninstallCommand.Display}"),
         });
         warnings.Add(new PlanWarning(WarningLevel.Info, L.T(
             "Üreticinin kaldırıcısı kendi penceresini açabilir.",
             "The vendor uninstaller may show its own window.")));
 
-        if (locationUsable)
+        if (owned)
         {
+            var size = FsUtil.DirectorySize(location!, maxEntries: 200_000, budget: TimeSpan.FromSeconds(4), ct: ct);
             steps.Add(new UninstallStep
             {
                 Kind = UninstallStepKind.RemoveDirectory,
                 Path = location,
+                SizeBytes = size,
                 Optional = true,
+                DefaultSelected = false,
                 Description = L.T(
-                    $"Kaldırıcıdan sonra kalan dosyaları sil (varsa): {location}",
-                    $"Delete leftover files after the uninstaller (if any): {location}") + " — " + DeleteDescription(location!, recycle),
+                    $"Kaldırıcıdan sonra kalan dosyaları sil (varsa, şu an {FormatBytes(size)}): {location}",
+                    $"Delete leftover files after the uninstaller (if any, currently {FormatBytes(size)}): {location}") + " — " + DeleteDescription(location!, recycle),
             });
+            warnings.Add(new PlanWarning(WarningLevel.Info, L.T(
+                "Kalan dosyaların silinmesi seçili değil; kaldırıcı bitince klasör yeniden denetlenir, veri içeriyorsa dokunulmaz.",
+                "Deleting leftover files is not selected; the folder is re-checked after the uninstaller and left alone if it holds data.")));
+            if (!recycle)
+            {
+                warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
+                    "Geri Dönüşüm Kutusu kapalı: kalan dosyalar seçilirse kalıcı olarak silinir.",
+                    "The Recycle Bin is turned off: leftover files are deleted permanently if selected.")));
+            }
         }
+        else if (location is not null)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Warning, L.T(
+                $"Kurulum klasörüne dokunulmayacak ({refusal}): {location}",
+                $"The install folder will not be touched ({refusal}): {location}")));
+        }
+
+        return uninstallerUnder;
+    }
+
+    /// <summary>
+    /// Why <paramref name="location"/> must not be swept as leftovers of <paramref name="item"/> (null = it may be offered).
+    /// Registry InstallLocation is vendor-supplied and per-user installers can write anything there.
+    /// </summary>
+    private string? LeftoverRefusal(CatalogItem item, string location, bool uninstallerInside, CancellationToken ct)
+    {
+        for (var dir = location; dir is not null; dir = Path.GetDirectoryName(dir))
+        {
+            if (Path.Exists(Path.Combine(dir, ".git")))
+            {
+                return L.T("klasör bir git deposunun içinde", "the folder is inside a git repository");
+            }
+        }
+
+        foreach (var other in catalog.State.Items)
+        {
+            if (other.Id == item.Id)
+            {
+                continue;
+            }
+
+            if (other.Path is { } p && Path.IsPathFullyQualified(p))
+            {
+                var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(p));
+                if (PathGuard.IsSameOrUnder(full, location) || PathGuard.IsSameOrUnder(location, full))
+                {
+                    return L.T($"başka bir öğeyle paylaşılıyor: {other.Name}", $"shared with another item: {other.Name}");
+                }
+            }
+
+            if (other.Kind == ItemKind.InstalledApp && other.UninstallCommand?.FileName is { } exe && Path.IsPathFullyQualified(exe)
+                && PathGuard.IsSameOrUnder(Path.GetFullPath(exe), location))
+            {
+                return L.T($"başka bir programın kaldırıcısı burada: {other.Name}", $"another program's uninstaller lives here: {other.Name}");
+            }
+        }
+
+        // Ownership evidence: the app's own uninstaller lives in the folder, or the folder is a vendor folder under an
+        // install root / the per-user Programs folder (never an arbitrary user folder).
+        var perUserPrograms = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
+        var underRoot = guard.InstallRoots.Any(r => PathGuard.IsStrictlyUnder(location, r)) || PathGuard.IsStrictlyUnder(location, perUserPrograms);
+        if (!uninstallerInside && !underRoot)
+        {
+            return L.T("uygulamaya ait olduğu doğrulanamadı", "it could not be verified to belong to the app");
+        }
+
+        if (FindDataMarker(location, ct) is { } marker)
+        {
+            return L.T($"kullanıcı verisi içeriyor: {marker}", $"it holds user data: {marker}");
+        }
+
+        return null;
+    }
+
+    /// <summary>First sign of user data (databases, repositories, backups) inside <paramref name="folder"/>, bounded walk.</summary>
+    internal static string? FindDataMarker(string folder, CancellationToken ct)
+    {
+        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true, RecurseSubdirectories = false };
+        var stack = new Stack<(string Dir, int Depth)>();
+        stack.Push((folder, 0));
+        var visited = 0;
+        while (stack.Count > 0 && visited++ < 5_000)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (dir, depth) = stack.Pop();
+            try
+            {
+                foreach (var entry in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", options))
+                {
+                    if (entry is DirectoryInfo sub)
+                    {
+                        if (DataMarkerDirectories.Contains(sub.Name))
+                        {
+                            return sub.FullName;
+                        }
+
+                        if (depth < 6)
+                        {
+                            stack.Push((sub.FullName, depth + 1));
+                        }
+                    }
+                    else if (DataMarkerFiles.Contains(entry.Name) || DataMarkerExtensions.Any(e => entry.Name.EndsWith(e, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return entry.FullName;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // best effort
+            }
+        }
+
+        return null;
     }
 
     private void PlanPackageTool(CatalogItem item, bool recycle, List<UninstallStep> steps, List<PlanWarning> warnings)
@@ -438,23 +862,35 @@ internal sealed class UninstallService(
     private void AddStopProcessesStep(string itemId, string path, List<UninstallStep> steps, List<PlanWarning> warnings)
     {
         var tracked = runService.ForItem(itemId).Count(r => !r.HasExited);
-        var external = processFinder.FindUnder(path).Count;
-        var total = tracked + external;
+        var external = processFinder.FindUnder(path);
+        var total = tracked + external.Count;
         steps.Add(new UninstallStep
         {
             Kind = UninstallStepKind.StopProcesses,
             Path = path,
             Description = L.T($"Bu klasörden çalışan işlemleri durdur ({total})", $"Stop processes running from this folder ({total})"),
         });
-        if (total > 0)
+        if (external.Count > 0)
+        {
+            var names = string.Join(", ", external.Take(5).Select(p => $"{Path.GetFileName(p.ImagePath)} ({p.ProcessId.ToString(CultureInfo.InvariantCulture)})"))
+                + (external.Count > 5 ? " …" : string.Empty);
+            warnings.Add(new PlanWarning(WarningLevel.Warning, L.T(
+                $"Şu işlemler kapatılacak, içlerindeki kaydedilmemiş iş kaybolur: {names}",
+                $"These processes will be closed; unsaved work in them is lost: {names}")));
+        }
+        else if (tracked > 0)
         {
             warnings.Add(new PlanWarning(WarningLevel.Info, L.T(
-                $"{total} çalışan işlem durdurulacak.",
-                $"{total} running process(es) will be stopped.")));
+                $"{tracked} çalışan işlem durdurulacak.",
+                $"{tracked} running process(es) will be stopped.")));
         }
     }
 
-    private HashSet<string> FindRelatedVirtualenvs(CatalogItem item, string path)
+    /// <summary>
+    /// Virtualenvs created outside the project. Exact (owner proven): pipenv/virtualenvwrapper <c>.project</c> files and
+    /// Poetry cache folders whose path hash matches the project. Name-only matches are returned as not exact.
+    /// </summary>
+    private List<(string Dir, bool Exact)> FindRelatedVirtualenvs(CatalogItem item, string path)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var raw in new[] { Path.GetFileName(path), item.Name })
@@ -468,7 +904,8 @@ internal sealed class UninstallService(
             names.Add(raw.Replace('_', '-').Replace('.', '-').Replace(' ', '-').ToLowerInvariant());
         }
 
-        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var poetryHash = PoetryPathHash(path);
+        var found = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var root in options.VirtualenvRoots)
         {
             if (!Directory.Exists(root))
@@ -480,7 +917,7 @@ internal sealed class UninstallService(
             {
                 var dirName = Path.GetFileName(dir);
 
-                // pipenv records the owning project in <venv>\.project — exact match when present.
+                // pipenv / virtualenvwrapper record the owning project in <venv>\.project — exact match when present.
                 var projectFile = Path.Combine(dir, ".project");
                 if (File.Exists(projectFile))
                 {
@@ -497,25 +934,51 @@ internal sealed class UninstallService(
                     if (Path.IsPathFullyQualified(owner)
                         && string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(owner)), path, StringComparison.OrdinalIgnoreCase))
                     {
-                        found.Add(dir);
+                        found[dir] = true;
                     }
 
                     continue;
                 }
 
-                if (names.Any(n => dirName.Equals(n, StringComparison.OrdinalIgnoreCase) || dirName.StartsWith(n + "-", StringComparison.OrdinalIgnoreCase)))
+                // Poetry: "<name>-<8 char hash of the project path>-py3.x"; the hash identifies the owner.
+                if (PoetryVenvName().Match(dirName) is { Success: true } m)
                 {
-                    found.Add(dir);
+                    if (string.Equals(m.Groups["h"].Value, poetryHash, StringComparison.Ordinal))
+                    {
+                        found[dir] = true;
+                    }
+
+                    continue;
+                }
+
+                // Anything else (virtualenvwrapper without .project): exact name only, never a prefix, never pre-selected.
+                if (names.Contains(dirName))
+                {
+                    found.TryAdd(dir, false);
                 }
             }
         }
 
-        return found;
+        return found.Select(kv => (kv.Key, kv.Value)).ToList();
     }
 
-    private List<string> FindShortcutsInto(string path, CancellationToken ct)
+    /// <summary>
+    /// The 8-character hash Poetry puts in virtualenv names (EnvManager.generate_env_name):
+    /// urlsafe-base64(sha256(normcase(realpath(project))))[:8]; normcase lower-cases on Windows.
+    /// </summary>
+    internal static string PoetryPathHash(string projectDirectory)
     {
-        var result = new List<string>();
+        var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(projectDirectory)).Replace('/', '\\').ToLowerInvariant();
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+        return Convert.ToBase64String(hash).Replace('+', '-').Replace('/', '_')[..8];
+    }
+
+    [GeneratedRegex(@"^(?<n>.+)-(?<h>[A-Za-z0-9_-]{8})-py\d+\.\d+$", RegexOptions.CultureInvariant)]
+    private static partial Regex PoetryVenvName();
+
+    private List<(string Shortcut, string Target)> FindShortcutsInto(string path, CancellationToken ct)
+    {
+        var result = new List<(string, string)>();
         var enumerated = 0;
         IEnumerable<string> Enumerate(string root, bool recursive)
         {
@@ -533,6 +996,7 @@ internal sealed class UninstallService(
             });
         }
 
+        var root = CanonicalForComparison(path);
         var candidates = options.ShortcutRootsRecursive.SelectMany(r => Enumerate(r, true))
             .Concat(options.ShortcutRootsTopLevel.SelectMany(r => Enumerate(r, false)));
         foreach (var lnk in candidates)
@@ -543,24 +1007,59 @@ internal sealed class UninstallService(
                 break;
             }
 
-            if (ShortcutReader.TryGetTarget(lnk) is { } target && Path.IsPathFullyQualified(target) && PathGuard.IsSameOrUnder(target, path))
+            if (CanonicalShortcutTarget(ShortcutReader.TryGetTarget(lnk)) is { } target && PathGuard.IsSameOrUnder(target, root))
             {
-                result.Add(lnk);
+                result.Add((lnk, target));
             }
         }
 
         return result;
     }
 
+    /// <summary>
+    /// Canonical form of a shortcut target for containment checks, or null when it cannot be compared safely:
+    /// not fully qualified, UNC/device, or containing '.'/'..' segments (a crafted "proj\..\other" must not match "proj").
+    /// 8.3 short names are expanded when the target exists.
+    /// </summary>
+    internal static string? CanonicalShortcutTarget(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || !Path.IsPathFullyQualified(raw) || raw.StartsWith(@"\\", StringComparison.Ordinal) || raw.StartsWith("//", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (raw.Split('\\', '/').Any(s => s is "." or ".."))
+        {
+            return null;
+        }
+
+        return CanonicalForComparison(raw);
+    }
+
+    private static string CanonicalForComparison(string path)
+    {
+        string full;
+        try
+        {
+            full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+
+        return Path.Exists(full) && Win32.GetLongPath(full) is { } longPath ? Path.TrimEndingDirectorySeparator(longPath) : full;
+    }
+
     // ───────────────────────────── execution ─────────────────────────────
 
-    private async Task ExecuteStepAsync(UninstallPlan plan, PlanContext context, UninstallStep step, IProgress<string>? progress, CancellationToken ct)
+    private async Task ExecuteStepAsync(PlanContext context, UninstallStep step, IProgress<string>? progress, CancellationToken ct)
     {
         var policy = context.Kind == ItemKind.InstalledApp ? DeletePolicy.InstalledAppLeftovers : DeletePolicy.Default;
         switch (step.Kind)
         {
             case UninstallStepKind.StopProcesses:
-                await StopProcessesAsync(plan.ItemId, step.Path, ct).ConfigureAwait(false);
+                await StopProcessesAsync(context.ItemId, step.Path, ct).ConfigureAwait(false);
                 break;
 
             case UninstallStepKind.RunCommand:
@@ -584,6 +1083,15 @@ internal sealed class UninstallService(
                         $"The uninstaller exited with code {result.ExitCode}. {detail}"));
                 }
 
+                if (context.Kind == ItemKind.InstalledApp && context.UninstallerUnderLocation is { } uninstaller
+                    && !await WaitUntilGoneAsync(uninstaller, ct).ConfigureAwait(false))
+                {
+                    // Exit code 0 from a stub (or a "Cancel" in the vendor UI) proves nothing: the uninstaller is still there.
+                    throw new InvalidOperationException(L.T(
+                        "Kaldırıcı bitti ama uygulama hâlâ kurulu görünüyor (kaldırıcısı yerinde); kalan dosyalar silinmedi. Windows Ayarlar › Uygulamalar'ı deneyin.",
+                        "The uninstaller finished but the app still appears to be installed (its uninstaller is still there); leftovers were not deleted. Try Windows Settings › Apps."));
+                }
+
                 break;
 
             case UninstallStepKind.RemoveDirectory:
@@ -593,6 +1101,20 @@ internal sealed class UninstallService(
                     // e.g. the vendor uninstaller already removed its install folder — nothing left to do.
                     progress?.Report(L.T($"Zaten yok: {target}", $"Already gone: {target}"));
                     break;
+                }
+
+                if (context.Kind == ItemKind.InstalledApp && Directory.Exists(target))
+                {
+                    // Look again after the uninstaller: it may deliberately keep data (e.g. a PostgreSQL cluster).
+                    if (FindDataMarker(target, ct) is { } marker)
+                    {
+                        throw new InvalidOperationException(L.T(
+                            $"Kalan klasörde kullanıcı verisi var ({marker}); dokunulmadı.",
+                            $"The remaining folder holds user data ({marker}); left untouched."));
+                    }
+
+                    var remaining = Directory.EnumerateFileSystemEntries(target, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }).Take(100_001).Count();
+                    progress?.Report(L.T($"Kalan {remaining} öğe siliniyor: {target}", $"Deleting {remaining} remaining item(s): {target}"));
                 }
 
                 if (File.Exists(target))
@@ -615,8 +1137,8 @@ internal sealed class UninstallService(
 
                 // Re-verify it is a shortcut that still points into the item before touching it.
                 if (!lnk.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase) || context.ItemPath is null
-                    || ShortcutReader.TryGetTarget(lnk) is not { } lnkTarget || !Path.IsPathFullyQualified(lnkTarget)
-                    || !PathGuard.IsSameOrUnder(lnkTarget, Path.GetFullPath(context.ItemPath)))
+                    || CanonicalShortcutTarget(ShortcutReader.TryGetTarget(lnk)) is not { } lnkTarget
+                    || !PathGuard.IsSameOrUnder(lnkTarget, CanonicalForComparison(context.ItemPath)))
                 {
                     throw new InvalidOperationException(L.T("Kısayol artık bu öğeyi göstermiyor; dokunulmadı.", "The shortcut no longer points to this item; left untouched."));
                 }
@@ -625,12 +1147,28 @@ internal sealed class UninstallService(
                 break;
 
             case UninstallStepKind.RemoveCatalogEntry:
-                await catalog.RemoveItemAsync(plan.ItemId, ct).ConfigureAwait(false);
+                await catalog.RemoveItemAsync(context.ItemId, ct).ConfigureAwait(false);
                 break;
 
             default:
                 throw new InvalidOperationException($"Unknown step kind {step.Kind}.");
         }
+    }
+
+    /// <summary>Self-deleting uninstallers remove themselves shortly after exiting; give them a few seconds.</summary>
+    private static async Task<bool> WaitUntilGoneAsync(string file, CancellationToken ct)
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            if (!File.Exists(file))
+            {
+                return true;
+            }
+
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+
+        return !File.Exists(file);
     }
 
     private async Task StopProcessesAsync(string itemId, string? path, CancellationToken ct)
@@ -680,5 +1218,17 @@ internal sealed class UninstallService(
         return value.ToString(unit == 0 ? "0" : "0.0", CultureInfo.CurrentCulture) + " " + units[unit];
     }
 
-    private sealed record PlanContext(ItemKind Kind, string? ItemPath, bool Recycle);
+    /// <summary>Everything execution needs, captured at planning time (the plan object handed out is never trusted).</summary>
+    private sealed record PlanContext(
+        ItemKind Kind,
+        string? ItemPath,
+        string? WebUrl,
+        bool Recycle,
+        string ItemId,
+        string ItemName,
+        ImmutableArray<UninstallStep> Steps,
+        bool Blocked,
+        bool RequiresTypedConfirmation,
+        ImmutableHashSet<string> DangerMessages,
+        string? UninstallerUnderLocation);
 }

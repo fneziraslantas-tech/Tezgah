@@ -136,6 +136,7 @@ public sealed partial class UninstallViewModel : ObservableObject
         }
 
         IsExecuting = true;
+        string? note = null;
         try
         {
             var selected = Steps.Where(s => s.IsSelected).Select(s => s.Step).ToList();
@@ -149,10 +150,21 @@ public sealed partial class UninstallViewModel : ObservableObject
             }
 
             Succeeded = result.Success;
+            note = result.AuditWarning;
+
             var freed = result.Outcomes.Where(o => o.Success).Sum(o => o.Step.SizeBytes ?? 0);
             ResultText = result.Success
                 ? _s.Format("Uninstall_Done", ItemName, Formatting.Bytes(freed))
                 : _s.Format("Uninstall_Partial", result.Outcomes.Count(o => !o.Success));
+        }
+        catch (Tezgah.Core.Uninstall.UninstallConfirmationException ex) when (ex.PlanChanged)
+        {
+            // The folder changed after the plan was made (new unsaved work): show the fresh plan and its warnings.
+            IsExecuting = false;
+            TypedText = string.Empty;
+            await LoadAsync(CancellationToken.None);
+            Warnings.Insert(0, new PlanWarning(WarningLevel.Danger, ex.Message));
+            return;
         }
         catch (Exception ex)
         {
@@ -162,9 +174,10 @@ public sealed partial class UninstallViewModel : ObservableObject
         finally
         {
             IsExecuting = false;
-            IsDone = true;
-            ProgressText = string.Empty;
         }
+
+        IsDone = true;
+        ProgressText = note ?? string.Empty;
     }
 
     private bool CanClose() => !IsExecuting;
@@ -183,6 +196,8 @@ public sealed partial class UninstallStepViewModel : ObservableObject
 
     public UninstallStepViewModel(UninstallStep step, IStrings strings, Action changed)
     {
+        ArgumentNullException.ThrowIfNull(step);
+        _isSelected = !step.Optional || step.DefaultSelected;
         Step = step;
         _s = strings;
         _changed = changed;

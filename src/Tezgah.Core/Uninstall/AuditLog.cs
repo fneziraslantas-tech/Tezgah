@@ -22,7 +22,7 @@ internal sealed class AuditLog(string path)
     public async Task WriteAsync(AuditEntry entry, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        var line = JsonSerializer.Serialize(entry, JsonOptions) + "\n";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(entry, JsonOptions) + "\n");
         await Gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -31,11 +31,38 @@ internal sealed class AuditLog(string path)
                 Directory.CreateDirectory(dir);
             }
 
-            await File.AppendAllTextAsync(Path, line, ct).ConfigureAwait(false);
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    // Share with readers/other instances; retry briefly on sharing violations (AV, backup, second Tezgah).
+                    await using var stream = new FileStream(Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                    await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+                    return;
+                }
+                catch (IOException) when (attempt < 4)
+                {
+                    await Task.Delay(100 * attempt, ct).ConfigureAwait(false);
+                }
+            }
         }
         finally
         {
             Gate.Release();
+        }
+    }
+
+    /// <summary>Like <see cref="WriteAsync"/> but never throws (except cancellation): returns the error message or null.</summary>
+    public async Task<string?> TryWriteAsync(AuditEntry entry, CancellationToken ct)
+    {
+        try
+        {
+            await WriteAsync(entry, ct).ConfigureAwait(false);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or NotSupportedException or ArgumentException)
+        {
+            return ex.Message;
         }
     }
 }
@@ -47,6 +74,7 @@ internal sealed record AuditEntry(
     string ItemName,
     string Outcome,
     IReadOnlyList<AuditStep> Steps,
-    string? Error = null);
+    string? Error = null,
+    string? RunId = null);
 
 internal sealed record AuditStep(UninstallStepKind Kind, string? Path, string? Command, bool Success, string? Error);

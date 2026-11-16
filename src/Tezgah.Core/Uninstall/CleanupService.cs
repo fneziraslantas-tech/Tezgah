@@ -67,7 +67,7 @@ internal sealed class CleanupService(ICatalogService catalog, PathGuard guard, F
         {
             if (auditSteps.Count > 0)
             {
-                await _audit.WriteAsync(
+                await _audit.TryWriteAsync(
                     new AuditEntry(DateTimeOffset.Now, "cleanup", item.Id, item.Name, auditSteps.All(s => s.Success) ? "success" : "failed", auditSteps),
                     CancellationToken.None).ConfigureAwait(false);
             }
