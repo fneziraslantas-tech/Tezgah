@@ -692,6 +692,101 @@ public sealed class UninstallServiceTests : IDisposable
         Assert.DoesNotContain(plan.Steps, s => s.Path == sneaky);
     }
 
+    private static int G(string dir, params string[] args) =>
+        Tezgah.Core.Tests.Discovery.TestTools.Run("git", dir, ["-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always", .. args]);
+
+    /// <summary>
+    /// Reviewer PoC: parent in sync with its origin, submodule commit never pushed to the submodule's origin, then
+    /// <c>git submodule deinit</c>. The commit now lives only in .git/modules/sub. Returns the parent, or null without git.
+    /// </summary>
+    private CatalogItem? ParentWithDeinitialisedSubmodule(string name, bool unpushedSubmoduleCommit)
+    {
+        var subSource = _dir.Sub(name + "-subsrc");
+        if (!Tezgah.Core.Tests.Discovery.TestTools.GitInitWithCommit(subSource))
+        {
+            return null;
+        }
+
+        var subOrigin = Path.Combine(_dir.Path, name + "-sub.git");
+        var parentOrigin = _dir.Sub(name + "-parent.git");
+        Assert.Equal(0, G(_dir.Path, "clone", "-q", "--bare", subSource, subOrigin));
+        Assert.Equal(0, G(parentOrigin, "init", "-q", "--bare", "-b", "main"));
+
+        var item = Repo(name);
+        var parent = item.Path!;
+        Assert.True(Tezgah.Core.Tests.Discovery.TestTools.GitInitWithCommit(parent));
+        Assert.Equal(0, G(parent, "remote", "add", "origin", parentOrigin));
+        Assert.Equal(0, G(parent, "submodule", "add", "-q", subOrigin, "sub"));
+        Assert.Equal(0, G(parent, "commit", "-q", "-m", "add sub"));
+        if (unpushedSubmoduleCommit)
+        {
+            var sub = Path.Combine(parent, "sub");
+            File.WriteAllText(Path.Combine(sub, "precious.txt"), "precious");
+            Assert.Equal(0, G(sub, "add", "-A"));
+            Assert.Equal(0, G(sub, "commit", "-q", "-m", "precious unpushed"));
+            Assert.Equal(0, G(parent, "add", "sub"));
+            Assert.Equal(0, G(parent, "commit", "-q", "-m", "bump sub"));
+        }
+
+        Assert.Equal(0, G(parent, "push", "-q", "-u", "origin", "main"));
+        Assert.Equal(0, G(parent, "submodule", "deinit", "-q", "sub"));
+        Assert.False(File.Exists(Path.Combine(parent, "sub", ".git")), "precondition: deinit removes the submodule working tree");
+        Assert.True(File.Exists(Path.Combine(parent, ".git", "modules", "sub", "HEAD")), "precondition: the submodule repository stays in .git/modules");
+        return item;
+    }
+
+    private UninstallService RealGitService(CatalogItem item) =>
+        new(new FakeCatalogService(item), new Tezgah.Core.Discovery.GitClient(Microsoft.Extensions.Logging.Abstractions.NullLogger<Tezgah.Core.Discovery.GitClient>.Instance),
+            PathGuard.Default, new FileRemover(PathGuard.Default), new FakeCommandExecutor(0), new FakeRunService(), new FakeProcessFinder(),
+            new UninstallOptions { AuditLogPath = AuditPath, VirtualenvRoots = [], ShortcutRootsRecursive = [], ShortcutRootsTopLevel = [] });
+
+    [Fact]
+    public async Task Unpushed_commit_in_a_deinitialised_submodule_requires_typed_confirmation()
+    {
+        var item = ParentWithDeinitialisedSubmodule("deinit-unpushed", unpushedSubmoduleCommit: true);
+        if (item is null)
+        {
+            return;
+        }
+
+        var service = RealGitService(item);
+        var plan = await service.PlanAsync(item.Id, CancellationToken.None);
+
+        Assert.True(plan.RequiresTypedConfirmation);
+        Assert.Contains(plan.Warnings, w => w.Level == WarningLevel.Danger && w.Message.Contains("modules/sub", StringComparison.Ordinal));
+        await Assert.ThrowsAsync<UninstallConfirmationException>(() => service.ExecuteAsync(plan, plan.Steps, null, null, CancellationToken.None));
+        Assert.True(Directory.Exists(Path.Combine(item.Path!, ".git", "modules", "sub")));
+    }
+
+    [Fact]
+    public async Task Pushed_deinitialised_submodule_adds_no_danger()
+    {
+        var item = ParentWithDeinitialisedSubmodule("deinit-pushed", unpushedSubmoduleCommit: false);
+        if (item is null)
+        {
+            return;
+        }
+
+        var plan = await RealGitService(item).PlanAsync(item.Id, CancellationToken.None);
+
+        Assert.DoesNotContain(plan.Warnings, w => w.Message.Contains("modules/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unenumerable_submodule_data_fails_closed()
+    {
+        var item = ParentWithDeinitialisedSubmodule("deinit-link", unpushedSubmoduleCommit: false);
+        if (item is null || !Tezgah.Core.Tests.Discovery.TestTools.TryCreateJunction(Path.Combine(item.Path!, ".git", "modules", "linked"), _dir.Sub("elsewhere")))
+        {
+            return;
+        }
+
+        var plan = await RealGitService(item).PlanAsync(item.Id, CancellationToken.None);
+
+        Assert.True(plan.RequiresTypedConfirmation);
+        Assert.Contains(plan.Warnings, w => w.Level == WarningLevel.Danger && w.Message.Contains(".git/modules", StringComparison.Ordinal));
+    }
+
     private sealed class SyncProgress(List<string> sink) : IProgress<string>
     {
         public void Report(string value) => sink.Add(value);

@@ -46,6 +46,120 @@ internal static class GitMetadataReader
         }
     }
 
+    /// <summary>Why a submodule's git directory may hold work that exists nowhere else.</summary>
+    internal enum ModuleProblem
+    {
+        None,
+        Unreadable,
+        NoRemote,
+        Stash,
+        UnpushedBranches,
+        UnpushedHead,
+    }
+
+    /// <summary>A submodule git directory under <c>&lt;commonDir&gt;/modules</c> and what its refs show.</summary>
+    internal sealed record ModuleState(string Name, string GitDir, ModuleProblem Problem, IReadOnlyList<string> Branches);
+
+    private const int MaxModules = 100;
+    private const int MaxModuleWalkDirectories = 2_000;
+
+    /// <summary>
+    /// Submodule git directories stored in the repository's common directory (<c>modules/&lt;name&gt;</c>, nested ones as
+    /// <c>modules/a/modules/b</c>). After <c>git submodule deinit</c> or <c>git rm</c> the working tree is gone and this is
+    /// the only copy of the submodule repository, commits never pushed included. Each one (except those in
+    /// <paramref name="skipGitDirs"/>, whose checked-out working trees are inspected on their own) is checked from its refs
+    /// alone, without running git: every local branch and HEAD must be on a remote-tracking ref (or provably behind one),
+    /// there is a remote and no stash. Null when the modules folder cannot be fully enumerated (link, unreadable folder,
+    /// too many entries): the caller fails closed.
+    /// </summary>
+    internal static IReadOnlyList<ModuleState>? ReadSubmoduleGitDirs(string commonDir, IReadOnlySet<string> skipGitDirs)
+    {
+        try
+        {
+            var root = Path.Combine(commonDir, "modules");
+            if (File.Exists(root))
+            {
+                return null;
+            }
+
+            if (!Directory.Exists(root))
+            {
+                return [];
+            }
+
+            if (GitRepoGuard.FindLinkBelow(commonDir, root) is not null)
+            {
+                return null;
+            }
+
+            var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false, RecurseSubdirectories = false };
+            var result = new List<ModuleState>();
+            var found = 0;
+            var visited = 0;
+            var stack = new Stack<(string Dir, string Prefix, int Depth)>();
+            stack.Push((root, string.Empty, 0));
+            while (stack.Count > 0)
+            {
+                var (dir, prefix, depth) = stack.Pop();
+                foreach (var child in new DirectoryInfo(dir).EnumerateDirectories("*", options))
+                {
+                    if (++visited > MaxModuleWalkDirectories || depth > 16)
+                    {
+                        return null;
+                    }
+
+                    if ((child.Attributes & FileAttributes.ReparsePoint) != 0 && Safety.FileRemover.IsLinkLike(child))
+                    {
+                        return null; // never followed; the deletion would remove only the link, but its contents cannot be vouched for
+                    }
+
+                    var name = prefix + child.Name;
+                    if (!File.Exists(Path.Combine(child.FullName, "HEAD")))
+                    {
+                        stack.Push((child.FullName, name + "/", depth + 1)); // a name with slashes: modules/libs/foo
+                        continue;
+                    }
+
+                    if (++found > MaxModules)
+                    {
+                        return null;
+                    }
+
+                    var full = Path.TrimEndingDirectorySeparator(child.FullName);
+                    if (!skipGitDirs.Contains(full))
+                    {
+                        result.Add(CheckModule(name, full));
+                    }
+
+                    var inner = Path.Combine(full, "modules");
+                    if (Directory.Exists(inner))
+                    {
+                        stack.Push((inner, name + "/", depth + 1));
+                    }
+                }
+            }
+
+            return result;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static ModuleState CheckModule(string name, string gitDir)
+    {
+        try
+        {
+            var (problem, branches) = new Repo(gitDir, gitDir).PushState();
+            return new ModuleState(name, gitDir, problem, branches);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidDataException or FormatException)
+        {
+            return new ModuleState(name, gitDir, ModuleProblem.Unreadable, []);
+        }
+    }
+
     /// <summary>A Unix timestamp plus "+hhmm" offset as written in commit headers and reflogs.</summary>
     internal static DateTimeOffset? ParseGitTime(string seconds, string zone)
     {
@@ -167,6 +281,49 @@ internal static class GitMetadataReader
                 StatusUnknown = true,
             };
         }
+
+        /// <summary>Whether everything this git directory's refs point at is on a remote-tracking ref (see <see cref="ReadSubmoduleGitDirs"/>).</summary>
+        public (ModuleProblem Problem, IReadOnlyList<string> Branches) PushState()
+        {
+            if (!ReadConfig().Any(e => e.Section == "remote" && e.Name == "url" && !string.IsNullOrWhiteSpace(e.Value)))
+            {
+                return (ModuleProblem.NoRemote, []);
+            }
+
+            if (ResolveRef("refs/stash") is not null)
+            {
+                return (ModuleProblem.Stash, []);
+            }
+
+            var remoteIds = RefsUnder("refs/remotes/").Values.ToHashSet(StringComparer.Ordinal);
+            var unpushed = LocalBranches()
+                .Where(kv => !OnRemote(kv.Value, remoteIds))
+                .Select(kv => kv.Key["refs/heads/".Length..])
+                .Order(StringComparer.Ordinal)
+                .ToList();
+            if (unpushed.Count > 0)
+            {
+                return (ModuleProblem.UnpushedBranches, unpushed.Take(5).ToList());
+            }
+
+            var head = ReadText(gitDir, "HEAD", MaxSmallFile)?.Trim();
+            if (head is null)
+            {
+                return (ModuleProblem.Unreadable, []);
+            }
+
+            var headId = head.StartsWith("ref:", StringComparison.Ordinal) ? ResolveRef(head[4..].Trim()) : IsObjectId(head) ? head : null;
+            if (headId is null && !head.StartsWith("ref:", StringComparison.Ordinal))
+            {
+                return (ModuleProblem.Unreadable, []);
+            }
+
+            return headId is not null && !OnRemote(headId, remoteIds) ? (ModuleProblem.UnpushedHead, []) : (ModuleProblem.None, []);
+        }
+
+        /// <summary><paramref name="id"/> is a remote-tracking tip or provably (loose commits) an ancestor of one.</summary>
+        private bool OnRemote(string id, HashSet<string> remoteIds) =>
+            remoteIds.Contains(id) || remoteIds.Take(20).Any(r => Distance(r, id) is not null);
 
         private List<GitConfigEntry> ReadConfig()
         {

@@ -355,6 +355,7 @@ internal sealed partial class UninstallService(
         if (kind == ItemKind.GitRepository)
         {
             AddGitWarnings(await ReadGitAsync(path, ct).ConfigureAwait(false), warnings, label: null);
+            AddSubmoduleGitDirWarnings(path, nested, warnings, label: null);
         }
         else if (nested.Count > 0)
         {
@@ -382,6 +383,7 @@ internal sealed partial class UninstallService(
             var info = await ReadGitAsync(repo, ct).ConfigureAwait(false);
             var before = warnings.Count;
             AddGitWarnings(info, warnings, relative);
+            AddSubmoduleGitDirWarnings(repo, nested, warnings, relative);
             if (warnings.Count == before)
             {
                 clean.Add(relative);
@@ -406,6 +408,58 @@ internal sealed partial class UninstallService(
     }
 
     private const int MaxNestedRepositories = 50;
+
+    /// <summary>
+    /// Submodule repositories kept in <c>.git/modules</c> are deleted with the folder. Neither the parent's git state nor the
+    /// nested-repository walk sees them once the submodule was deinitialised or removed (no working tree left), yet they
+    /// may hold the only copy of commits never pushed. Each one not already inspected as a checked-out nested repository
+    /// is checked from its refs; anything unproven, and a modules folder that cannot be enumerated, is Danger.
+    /// </summary>
+    private static void AddSubmoduleGitDirWarnings(string repo, IReadOnlyList<string> nested, List<PlanWarning> warnings, string? label)
+    {
+        if (!GitRepoGuard.TryLocateGitDirs(repo, out _, out var commonDir, out _))
+        {
+            return; // the repository's own git state is already unreadable, which is Danger
+        }
+
+        string Prefix(string tr, string en) => label is null ? L.T(tr, en) : L.T($"İç içe depo '{label}': {tr}", $"Nested repository '{label}': {en}");
+
+        // Git directories of submodules checked out as nested repositories: those are inspected as repositories themselves.
+        var inspected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in nested)
+        {
+            if (GitRepoGuard.TryLocateGitDirs(n, out var g, out _, out _))
+            {
+                inspected.Add(Path.TrimEndingDirectorySeparator(g!));
+            }
+        }
+
+        var modules = GitMetadataReader.ReadSubmoduleGitDirs(commonDir!, inspected);
+        if (modules is null)
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Danger, Prefix(
+                "Alt modül verisi (.git/modules) denetlenemedi; gönderilmemiş commit olup olmadığı doğrulanamadı.",
+                "Submodule data in .git/modules could not be checked; unpushed commits could not be ruled out.")));
+            return;
+        }
+
+        foreach (var m in modules.Where(m => m.Problem != GitMetadataReader.ModuleProblem.None).Take(10))
+        {
+            var (tr, en) = m.Problem switch
+            {
+                GitMetadataReader.ModuleProblem.NoRemote => ("uzak deposu yok, tek kopyası burada", "it has no remote, this is its only copy"),
+                GitMetadataReader.ModuleProblem.Stash => ("stash içeriyor", "it holds stashed changes"),
+                GitMetadataReader.ModuleProblem.UnpushedBranches => (
+                    $"hiçbir uzakta olmayan commit'ler içeriyor ({string.Join(", ", m.Branches)})",
+                    $"it holds commits no remote has ({string.Join(", ", m.Branches)})"),
+                GitMetadataReader.ModuleProblem.UnpushedHead => ("HEAD commit'inin uzakta olduğu doğrulanamadı", "its HEAD commit could not be shown to be on a remote"),
+                _ => ("okunamadı; gönderilmemiş commit olup olmadığı doğrulanamadı", "it could not be read; unpushed commits could not be ruled out"),
+            };
+            warnings.Add(new PlanWarning(WarningLevel.Danger, Prefix(
+                $"Alt modül deposu .git/modules/{m.Name} (çalışma ağacı yok ya da ayrıca denetlenmedi) silinecek: {tr}.",
+                $"Submodule repository .git/modules/{m.Name} (removed, deinitialised or not inspected separately) will be deleted: {en}.")));
+        }
+    }
 
     private async Task<GitInfo?> ReadGitAsync(string path, CancellationToken ct)
     {
