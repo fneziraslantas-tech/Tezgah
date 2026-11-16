@@ -787,6 +787,62 @@ public sealed class UninstallServiceTests : IDisposable
         Assert.Contains(plan.Warnings, w => w.Level == WarningLevel.Danger && w.Message.Contains(".git/modules", StringComparison.Ordinal));
     }
 
+    /// <summary>A clean, pushed linked worktree of <paramref name="main"/> at <paramref name="worktree"/> (branch pushed with upstream).</summary>
+    private static void AddPushedLinkedWorktree(string main, string worktree, string branch)
+    {
+        Assert.Equal(0, G(main, "worktree", "add", "-q", "-b", branch, worktree));
+        Assert.Equal(0, G(worktree, "push", "-q", "-u", "origin", branch));
+        Assert.True(File.Exists(Path.Combine(worktree, ".git")), "precondition: a linked worktree has a .git file");
+    }
+
+    private static CatalogItem ItemAt(string path, ItemKind kind) =>
+        new() { Id = ItemIds.ForPath(path), Kind = kind, Source = Sources.FileSystem, Name = Path.GetFileName(path), Path = path };
+
+    [Fact]
+    public async Task Deleting_a_linked_worktree_does_not_report_the_main_repositorys_submodules()
+    {
+        // Reviewer PoC: the worktree's common dir is the main repository's .git, which the deletion keeps; its
+        // .git/modules/sub was reported as "will be deleted" with Danger and forced typed confirmation.
+        var main = ParentWithDeinitialisedSubmodule("wt-main", unpushedSubmoduleCommit: true);
+        if (main is null)
+        {
+            return;
+        }
+
+        var wtPath = Path.Combine(_dir.Path, "repos", "wt-linked");
+        AddPushedLinkedWorktree(main.Path!, wtPath, "feature");
+        var worktree = ItemAt(wtPath, ItemKind.GitRepository);
+
+        var plan = await RealGitService(worktree).PlanAsync(worktree.Id, CancellationToken.None);
+
+        Assert.DoesNotContain(plan.Warnings, w => w.Message.Contains("modules/", StringComparison.Ordinal));
+        Assert.True(Directory.Exists(Path.Combine(main.Path!, ".git", "modules", "sub")));
+
+        // Deleting the main repository itself still checks (and flags) its own .git/modules.
+        var mainPlan = await RealGitService(main).PlanAsync(main.Id, CancellationToken.None);
+        Assert.Contains(mainPlan.Warnings, w => w.Level == WarningLevel.Danger && w.Message.Contains("modules/sub", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Nested_linked_worktree_of_an_outside_repository_does_not_report_its_submodules()
+    {
+        var main = ParentWithDeinitialisedSubmodule("wt-outer", unpushedSubmoduleCommit: true);
+        if (main is null)
+        {
+            return;
+        }
+
+        var host = _dir.Sub("repos", "wt-host");
+        File.WriteAllText(Path.Combine(host, "README.md"), "hello");
+        AddPushedLinkedWorktree(main.Path!, Path.Combine(host, "inner"), "inner-feature");
+        var folder = ItemAt(host, ItemKind.ProjectFolder);
+
+        var plan = await RealGitService(folder).PlanAsync(folder.Id, CancellationToken.None);
+
+        Assert.DoesNotContain(plan.Warnings, w => w.Message.Contains("modules/", StringComparison.Ordinal));
+        Assert.Contains(plan.Warnings, w => w.Message.Contains("inner", StringComparison.Ordinal)); // the nested repo was seen
+    }
+
     private sealed class SyncProgress(List<string> sink) : IProgress<string>
     {
         public void Report(string value) => sink.Add(value);

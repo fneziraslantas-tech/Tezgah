@@ -355,7 +355,7 @@ internal sealed partial class UninstallService(
         if (kind == ItemKind.GitRepository)
         {
             AddGitWarnings(await ReadGitAsync(path, ct).ConfigureAwait(false), warnings, label: null);
-            AddSubmoduleGitDirWarnings(path, nested, warnings, label: null);
+            AddSubmoduleGitDirWarnings(path, path, nested, warnings, label: null);
         }
         else if (nested.Count > 0)
         {
@@ -383,7 +383,7 @@ internal sealed partial class UninstallService(
             var info = await ReadGitAsync(repo, ct).ConfigureAwait(false);
             var before = warnings.Count;
             AddGitWarnings(info, warnings, relative);
-            AddSubmoduleGitDirWarnings(repo, nested, warnings, relative);
+            AddSubmoduleGitDirWarnings(repo, path, nested, warnings, relative);
             if (warnings.Count == before)
             {
                 clean.Add(relative);
@@ -414,12 +414,20 @@ internal sealed partial class UninstallService(
     /// nested-repository walk sees them once the submodule was deinitialised or removed (no working tree left), yet they
     /// may hold the only copy of commits never pushed. Each one not already inspected as a checked-out nested repository
     /// is checked from its refs; anything unproven, and a modules folder that cannot be enumerated, is Danger.
+    /// Only git data that the deletion actually removes is checked: a linked worktree (or a nested repository that is a
+    /// linked worktree of a repository elsewhere) keeps its common git directory, modules included, outside
+    /// <paramref name="deletedRoot"/>, so those submodule repositories survive and are not reported.
     /// </summary>
-    private static void AddSubmoduleGitDirWarnings(string repo, IReadOnlyList<string> nested, List<PlanWarning> warnings, string? label)
+    private static void AddSubmoduleGitDirWarnings(string repo, string deletedRoot, IReadOnlyList<string> nested, List<PlanWarning> warnings, string? label)
     {
         if (!GitRepoGuard.TryLocateGitDirs(repo, out _, out var commonDir, out _))
         {
             return; // the repository's own git state is already unreadable, which is Danger
+        }
+
+        if (!PathGuard.IsSameOrUnder(Path.GetFullPath(commonDir!), Path.GetFullPath(deletedRoot)))
+        {
+            return; // .git/modules lives in a repository outside the deleted folder and is kept
         }
 
         string Prefix(string tr, string en) => label is null ? L.T(tr, en) : L.T($"İç içe depo '{label}': {tr}", $"Nested repository '{label}': {en}");
