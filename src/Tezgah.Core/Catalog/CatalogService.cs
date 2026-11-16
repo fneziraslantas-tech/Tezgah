@@ -244,8 +244,65 @@ internal sealed class CatalogService : ICatalogService, IDisposable
     /// Identity of a filesystem item used to bind workspace trust to the folder that was actually trusted: its creation
     /// time. A folder deleted and re-created (clone, unzip, copy) at the same path gets a new one.
     /// </summary>
-    internal static string TrustAnchorOf(CatalogItem item) =>
-        item.InstalledAt is { } created ? created.UtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unknown";
+    /// <remarks>Null when the creation time is unknown: an unknown identity never matches anything (fail closed).</remarks>
+    internal static string? TrustAnchorOf(CatalogItem item) =>
+        item.InstalledAt is { } created && created.UtcTicks > MinAnchorTicks ? AnchorText(created.UtcTicks) : null;
+
+    /// <summary>The identity of whatever folder lives at <paramref name="path"/> right now, or null when it cannot be read.</summary>
+    internal static string? LiveTrustAnchor(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !Path.IsPathFullyQualified(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            // GetCreationTimeUtc returns 1601-01-01 instead of throwing for missing paths: check existence first.
+            if (!Directory.Exists(path))
+            {
+                return null;
+            }
+
+            var ticks = Directory.GetCreationTimeUtc(path).Ticks;
+            return ticks > MinAnchorTicks ? AnchorText(ticks) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Anything at or before 1601-01-02 is the "no time" sentinel of the file APIs.</summary>
+    private static readonly long MinAnchorTicks = new DateTime(1601, 1, 2, 0, 0, 0, DateTimeKind.Utc).Ticks;
+
+    private static string AnchorText(long utcTicks) => utcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// True when <paramref name="meta"/> records trust for <paramref name="item"/> and, for filesystem items, the folder at the
+    /// path right now has the identity that was trusted. Items of other sources only need the recorded decision.
+    /// </summary>
+    internal static bool IsTrustValid(CatalogItem? item, UserMeta? meta)
+    {
+        if (item is null || meta is not { Trusted: true })
+        {
+            return false;
+        }
+
+        if (item.Source != Sources.FileSystem)
+        {
+            return true;
+        }
+
+        return meta.TrustAnchor is { Length: > 0 } anchor && LiveTrustAnchor(item.Path) is { } live && string.Equals(anchor, live, StringComparison.Ordinal);
+    }
+
+    public bool IsTrusted(string itemId)
+    {
+        ArgumentNullException.ThrowIfNull(itemId);
+        var state = State;
+        return IsTrustValid(state.Items.FirstOrDefault(i => i.Id == itemId), state.Meta.GetValueOrDefault(itemId));
+    }
 
     /// <summary>
     /// Revokes trust (never touches favorites, tags or notes) for filesystem items whose identity no longer matches the
@@ -266,7 +323,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             bool revoke;
             if (byId.TryGetValue(id, out var item))
             {
-                revoke = item.Source == Sources.FileSystem && m.TrustAnchor != TrustAnchorOf(item);
+                revoke = item.Source == Sources.FileSystem && (TrustAnchorOf(item) is not { } anchor || m.TrustAnchor != anchor);
             }
             else
             {
@@ -320,7 +377,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             return;
         }
 
-        if (fetchGit && !GetMeta(itemId).Trusted)
+        if (fetchGit && !IsTrusted(itemId))
         {
             // git fetch honours repository settings (core.sshCommand, credential helpers...): never for untrusted code.
             fetchGit = false;
@@ -373,15 +430,31 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         ArgumentException.ThrowIfNullOrEmpty(itemId);
         ArgumentNullException.ThrowIfNull(update);
         await EnsureInitializedAsync(ct).ConfigureAwait(false);
+
+        // Trust recorded for a folder that has since been replaced is void before any update sees it: toggling a favorite
+        // must not carry it over, and a fresh trust confirmation must bind to the folder the user is looking at now.
+        var snapshot = State;
+        var staleTrust = snapshot.Meta.GetValueOrDefault(itemId) is { Trusted: true } before
+            && snapshot.Items.FirstOrDefault(i => i.Id == itemId) is { Source: Sources.FileSystem } fsItem
+            && !IsTrustValid(fsItem, before);
         UpdateState(s =>
         {
             var meta = new Dictionary<string, UserMeta>(s.Meta, StringComparer.Ordinal);
             var current = meta.TryGetValue(itemId, out var m) && m is not null ? m : new UserMeta();
+            if (staleTrust && current.Trusted)
+            {
+                current = RevokedTrust(current);
+            }
+
             var updated = update(current);
             if (updated.Trusted && (!current.Trusted || updated.TrustAnchor is null) && s.Items.FirstOrDefault(i => i.Id == itemId) is { } trustedItem)
             {
-                // Bind the trust decision to the folder identity the user just saw.
-                updated = updated with { TrustAnchor = TrustAnchorOf(trustedItem) };
+                // Bind the trust decision to the folder identity the user just saw. Unknown identity: nothing to bind
+                // to, so the folder stays untrusted (fail closed) instead of matching any folder.
+                var anchor = TrustAnchorOf(trustedItem);
+                updated = trustedItem.Source == Sources.FileSystem && anchor is null
+                    ? updated with { Trusted = false, TrustAnchor = null }
+                    : updated with { TrustAnchor = anchor };
             }
             else if (!updated.Trusted)
             {

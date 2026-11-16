@@ -153,6 +153,13 @@ public interface ICatalogService
 
     UserMeta GetMeta(string itemId);
 
+    /// <summary>
+    /// Workspace trust checked at the point of use: the recorded trust decision AND, for filesystem items, the identity of
+    /// the folder that lives at the path right now (a folder deleted and replaced since the last scan is not trusted).
+    /// Every caller about to execute an item's code or honour its repository config must ask this, not <see cref="UserMeta.Trusted"/>.
+    /// </summary>
+    bool IsTrusted(string itemId) => GetMeta(itemId).Trusted;
+
     /// <summary>Detected profiles + user custom profiles.</summary>
     IReadOnlyList<RunProfile> GetProfiles(string itemId);
     bool IsForgotten(CatalogItem item);

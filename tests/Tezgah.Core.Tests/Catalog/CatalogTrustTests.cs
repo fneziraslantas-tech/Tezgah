@@ -99,6 +99,66 @@ public sealed class CatalogTrustTests : IDisposable
     }
 
     [Fact]
+    public async Task Folder_replaced_after_the_scan_is_untrusted_at_point_of_use()
+    {
+        using var svc = NewService();
+        var path = Project("swapnow");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        Assert.True(svc.IsTrusted(item.Id));
+
+        // Replaced on disk, no scan or refresh since: the recorded decision says "trusted", the live folder does not.
+        Directory.SetCreationTimeUtc(path, DateTime.UtcNow.AddDays(-3));
+        Assert.True(svc.GetMeta(item.Id).Trusted);
+        Assert.False(svc.IsTrusted(item.Id));
+
+        var profile = svc.GetProfiles(item.Id)[0];
+        await using var runs = new Tezgah.Core.Execution.RunService(svc, Tezgah.Core.Safety.PathGuard.Default, new Tezgah.Core.Execution.ProcessHost());
+        await Assert.ThrowsAsync<UntrustedItemException>(() => runs.StartAsync(item.Id, profile, CancellationToken.None));
+
+        // Unrelated meta edits never launder the stale decision onto the new folder...
+        await svc.UpdateMetaAsync(item.Id, m => m with { Favorite = true }, CancellationToken.None);
+        Assert.False(svc.GetMeta(item.Id).Trusted);
+        Assert.False(svc.IsTrusted(item.Id));
+
+        // ...an explicit new confirmation (after the item was re-read) binds to the folder that is there now.
+        await svc.RefreshItemAsync(item.Id, fetchGit: false, CancellationToken.None);
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        Assert.True(svc.IsTrusted(item.Id));
+    }
+
+    [Fact]
+    public async Task Fetch_is_refused_for_a_replaced_folder_before_any_rescan()
+    {
+        var git = new FetchRecordingGit();
+        using var svc = NewService(git);
+        var path = _dir.Sub("fetchswap");
+        _dir.Sub("fetchswap", ".git");
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = true }, CancellationToken.None);
+        Directory.SetCreationTimeUtc(path, DateTime.UtcNow.AddDays(-5));
+        git.Fetches.Clear();
+
+        await svc.RefreshItemAsync(item.Id, fetchGit: true, CancellationToken.None);
+
+        Assert.DoesNotContain(true, git.Fetches);
+    }
+
+    [Fact]
+    public void Unknown_folder_identity_never_matches()
+    {
+        var a = new CatalogItem { Id = "path:c:\\a", Kind = ItemKind.ProjectFolder, Source = Sources.FileSystem, Name = "a", Path = @"C:\a" };
+        Assert.Null(CatalogService.TrustAnchorOf(a));
+        Assert.Null(CatalogService.LiveTrustAnchor(Path.Combine(_dir.Path, "does-not-exist")));
+
+        // Legacy/forged "unknown" anchors (the old constant) are revoked instead of comparing equal.
+        var meta = new Dictionary<string, UserMeta> { [a.Id] = new UserMeta { Trusted = true, TrustAnchor = "unknown" } };
+        var reconciled = CatalogService.ReconcileTrust([a], meta, pruneMissingPaths: false);
+        Assert.False(reconciled[a.Id].Trusted);
+        Assert.False(CatalogService.IsTrustValid(a, new UserMeta { Trusted = true, TrustAnchor = "unknown" }));
+    }
+
+    [Fact]
     public async Task Refresh_of_deleted_folder_revokes_trust()
     {
         using var svc = NewService();

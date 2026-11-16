@@ -32,7 +32,8 @@ internal sealed class RunService(ICatalogService catalog, IPathGuard pathGuard, 
         ArgumentNullException.ThrowIfNull(itemId);
         ArgumentNullException.ThrowIfNull(profile);
 
-        if (!catalog.GetMeta(itemId).Trusted)
+        // Checked against the live folder: a trusted folder deleted and replaced since the last scan is not trusted.
+        if (!catalog.IsTrusted(itemId))
         {
             throw new UntrustedItemException(itemId);
         }

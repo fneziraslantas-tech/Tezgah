@@ -244,6 +244,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             seen.Add(item.Id);
             var meta = state.Meta.GetValueOrDefault(item.Id) ?? new UserMeta();
+            if (meta.Trusted && !_catalog.IsTrusted(item.Id))
+            {
+                meta = meta with { Trusted = false }; // the trusted folder was replaced since the last scan
+            }
+
             var profiles = _catalog.GetProfiles(item.Id);
             var forgotten = _catalog.IsForgotten(item);
             if (_items.TryGetValue(item.Id, out var vm))
@@ -682,7 +687,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     internal async Task<RunSessionViewModel?> StartAsync(ItemViewModel item, RunProfile profile)
     {
-        if (!item.IsTrusted && !await AskTrustAsync(item, profile))
+        if (!_catalog.IsTrusted(item.Id) && !await AskTrustAsync(item, profile))
         {
             return null;
         }
@@ -732,6 +737,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     private async Task<bool> AskTrustAsync(ItemViewModel item, string commandLine)
     {
+        if (_catalog.GetMeta(item.Id).Trusted)
+        {
+            // Recorded trust no longer matches the folder on disk: re-read it so the prompt shows (and binds to) what is there now.
+            await _catalog.RefreshItemAsync(item.Id, fetchGit: false, CancellationToken.None);
+            SyncFromCatalog();
+        }
+
         var meta = _catalog.GetMeta(item.Id);
         var claimed = item.Git?.RemoteUrl ?? item.Item.WebUrl;
         var verified = meta.ClonedFrom is { } cloned && (claimed is null || string.Equals(cloned, claimed, StringComparison.OrdinalIgnoreCase));
@@ -918,7 +930,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         // git pull runs the repository's hooks, filters and transport settings: same trust gate as running its code.
-        if (!item.IsTrusted && !await AskTrustAsync(item, "git pull --ff-only"))
+        if (!_catalog.IsTrusted(item.Id) && !await AskTrustAsync(item, "git pull --ff-only"))
         {
             return;
         }
@@ -962,7 +974,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         try
         {
             // Untrusted repositories are refreshed locally only: git fetch honours repository-controlled commands.
-            await _catalog.RefreshItemAsync(item.Id, fetchGit: item.HasGit && item.IsTrusted, CancellationToken.None);
+            await _catalog.RefreshItemAsync(item.Id, fetchGit: item.HasGit && _catalog.IsTrusted(item.Id), CancellationToken.None);
         }
         catch (Exception ex)
         {
