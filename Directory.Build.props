@@ -15,7 +15,8 @@
     <Product>Tezgah</Product>
     <Copyright>Copyright © 2026 Tezgah contributors</Copyright>
     <!-- CA1303: literal strings are fine (localization handled in UI resources). CA1848: LoggerMessage not required here. -->
-    <NoWarn>$(NoWarn);CA1303;CA1848;CA2254</NoWarn>
+    <NoWarn>$(NoWarn);CA1303;CA1848;CA1873;CA2254</NoWarn>
   </PropertyGroup>
 </Project>
+
 
