@@ -1,6 +1,10 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
+// Every P/Invoke in this assembly targets a Windows system DLL: resolve them from System32 only, never from the
+// application folder, the current directory or PATH.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace Tezgah.Core.Interop;
 
 /// <summary>Owns a Win32 Job Object handle. Closing the last handle of a KILL_ON_JOB_CLOSE job kills every process in it.</summary>
@@ -161,6 +165,13 @@ internal static unsafe partial class NativeMethods
     public const ushort FofAllowUndo = 0x0040;
     public const ushort FofNoErrorUi = 0x0400;
     public const ushort FofWantNukeWarning = 0x4000;
+
+    /// <summary>Application folder, System32 and AddDllDirectory folders; never the current directory or PATH.</summary>
+    public const uint LoadLibrarySearchDefaultDirs = 0x00001000;
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetDefaultDllDirectories(uint directoryFlags);
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateJobObjectW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     public static partial SafeJobHandle CreateJobObject(nint jobAttributes, string? name);

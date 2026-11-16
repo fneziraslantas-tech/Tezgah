@@ -148,6 +148,7 @@
     <sys:String x:Key="Trust_Footnote">Once you confirm, this folder is marked as trusted and you won't be asked again.</sys:String>
     <sys:String x:Key="Trust_Confirm">Trust and run</sys:String>
     <sys:String x:Key="Trust_Cancel">Cancel</sys:String>
+    <sys:String x:Key="Trust_OpenTerminal">Open a terminal in this folder (your shell profile and prompt run here: git-aware prompts read the repository config, hooks such as direnv load scripts from the folder)</sys:String>
 
     <!-- uninstall -->
     <sys:String x:Key="Uninstall_Title">Remove {0}?</sys:String>

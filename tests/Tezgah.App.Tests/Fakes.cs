@@ -115,9 +115,21 @@ internal sealed class FakeShell : IShellService
         return true;
     }
 
-    public bool OpenTerminal(string path) => true;
+    public List<string> Terminals { get; } = [];
 
-    public bool OpenInVsCode(string path) => false;
+    public bool OpenTerminal(string path)
+    {
+        Terminals.Add(path);
+        return true;
+    }
+
+    public List<string> VsCodeFolders { get; } = [];
+
+    public bool OpenInVsCode(string path)
+    {
+        VsCodeFolders.Add(path);
+        return false;
+    }
 }
 
 internal sealed class FakeClipboard : IClipboardService
@@ -147,8 +159,10 @@ internal sealed class Harness
         Runs = new DemoRunService(Catalog);
         Uninstall = new DemoUninstallService(Catalog, Runs);
         Vm = new MainViewModel(Catalog, Runs, Uninstall, new DemoCleanupService(Catalog), new DemoGitClient(Catalog),
-            Dialogs, new FakeShell(), new FakeClipboard(), new KeyStrings(), Ui, new FakeAppearance(), new AppMode(true));
+            Dialogs, Shell, new FakeClipboard(), new KeyStrings(), Ui, new FakeAppearance(), new AppMode(true));
     }
+
+    public FakeShell Shell { get; } = new();
 
     public DemoCatalogService Catalog { get; }
 

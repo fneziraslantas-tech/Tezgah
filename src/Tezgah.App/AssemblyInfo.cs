@@ -1,4 +1,8 @@
+using System.Runtime.InteropServices;
 using System.Windows;
+
+// Any P/Invoke added to the app resolves from System32 only (Tezgah.Core declares the same).
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
 
 [assembly:ThemeInfo(
     ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located

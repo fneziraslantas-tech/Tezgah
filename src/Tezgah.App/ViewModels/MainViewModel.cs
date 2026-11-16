@@ -886,15 +886,36 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// A shell started in a folder is not inert: prompt themes (posh-git, oh-my-posh, starship) run git there, which
+    /// honours the repository's config (core.fsmonitor, hooks), and profile hooks such as direnv load the folder's
+    /// scripts. An untrusted project folder therefore goes through the same trust prompt as running its code.
+    /// </summary>
     [RelayCommand]
-    private void OpenTerminal()
+    private async Task OpenTerminalAsync()
     {
-        if (SelectedItem?.Path is { } p && !_shell.OpenTerminal(p))
+        if (SelectedItem is not { Path: { } p } item)
+        {
+            return;
+        }
+
+        if (item.Kind is ItemKind.GitRepository or ItemKind.ProjectFolder && !_catalog.IsTrusted(item.Id)
+            && !await AskTrustAsync(item, _s.Text("Trust_OpenTerminal")))
+        {
+            return;
+        }
+
+        if (!_shell.OpenTerminal(p))
         {
             Notify(_s.Text("Open_TerminalFailed"), isError: true);
         }
     }
 
+    /// <summary>
+    /// No Tezgah trust prompt: VS Code opens an unknown folder in its own Restricted Mode (Workspace Trust), which keeps
+    /// tasks, debugging, workspace settings and extensions that need trust - git included - off until the user trusts
+    /// the folder there. See SECURITY.md.
+    /// </summary>
     [RelayCommand]
     private void OpenInVsCode()
     {

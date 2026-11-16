@@ -10,6 +10,7 @@ using Tezgah.App.Services;
 using Tezgah.App.ViewModels;
 using Tezgah.Core;
 using Tezgah.Core.Abstractions;
+using Tezgah.Core.Execution;
 
 namespace Tezgah.App;
 
@@ -30,6 +31,16 @@ public partial class App : Application, IDisposable
     private FileLoggerProvider? _logProvider;
     private ILogger? _log;
     private int _crashDialogOpen;
+
+    /// <summary>Result of <see cref="RestrictDllSearch"/>.</summary>
+    internal static bool DllSearchRestricted { get; private set; }
+
+    /// <summary>
+    /// Runs when the exe's module loads, before Main creates the WPF application: every later native load (WPF's own
+    /// DLLs, shell extensions, ours) uses the restricted search order (see <see cref="DllSearch.Restrict"/>).
+    /// </summary>
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void RestrictDllSearch() => DllSearchRestricted = DllSearch.Restrict();
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -69,6 +80,11 @@ public partial class App : Application, IDisposable
         if (_log.IsEnabled(LogLevel.Information))
         {
             _log.LogInformation("Starting Tezgah {Version} (demo={Demo}, coreMissing={Missing})", typeof(App).Assembly.GetName().Version, demo, coreMissing);
+        }
+
+        if (!DllSearchRestricted)
+        {
+            _log.LogWarning("SetDefaultDllDirectories failed; the legacy DLL search order stays in effect");
         }
 
         var window = _services.GetRequiredService<MainWindow>();

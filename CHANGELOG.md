@@ -8,6 +8,23 @@ All notable changes to Tezgah are documented in this file. The format is based o
 
 ## [Unreleased]
 
+### Fixed
+
+- The About dialog shows the version of the release tag. The release workflow now takes the version only from the
+  `vX.Y.Z` tag and passes it to the build (the v0.1.1 build showed `0.1.0`); CI checks that the version passed to
+  `dotnet publish` is the one in `Tezgah.exe`. Local builds report `0.1.2-dev`.
+
+### Security
+
+- *Open in Terminal* on an untrusted git repository or project folder now asks for workspace trust first: a shell
+  prompt or profile hook (git-aware prompts, direnv) runs in that folder. *Open in VS Code* relies on VS Code's own
+  Workspace Trust (Restricted Mode); see SECURITY.md.
+- DLL search hardening: `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)` runs before `Main`, and every
+  P/Invoke resolves from System32 only (`DefaultDllImportSearchPaths`).
+- Release hardening: the release tag reaches scripts only through `env` after validation; the .NET SDK is pinned with
+  `global.json` (10.0.302, `rollForward: latestPatch`); `.gitignore` covers `.env.*`, `*.pem`, `*.key`, `*.pfx` and
+  `*.snk`; the README's attestation check pins the signing workflow and the tag (`--signer-workflow`, `--source-ref`).
+
 ## [0.1.1] - 2026-11-16
 
 First public release. Windows x64, self-contained single-file build (`Tezgah-v0.1.1-win-x64.zip`) with a SHA-256
