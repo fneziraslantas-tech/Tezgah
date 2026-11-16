@@ -64,6 +64,8 @@ public class GitTrustGateTests
 
         public UserMeta GetMeta(string itemId) => inner.GetMeta(itemId);
 
+        public string? VerifiedCloneSource(string itemId) => inner.VerifiedCloneSource(itemId);
+
         public IReadOnlyList<RunProfile> GetProfiles(string itemId) => inner.GetProfiles(itemId);
 
         public bool IsForgotten(CatalogItem item) => inner.IsForgotten(item);

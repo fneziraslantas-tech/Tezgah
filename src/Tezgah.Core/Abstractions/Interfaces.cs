@@ -160,6 +160,12 @@ public interface ICatalogService
     /// </summary>
     bool IsTrusted(string itemId) => GetMeta(itemId).Trusted;
 
+    /// <summary>
+    /// The URL Tezgah cloned this item from, but only while the folder at the path right now is the one Tezgah cloned
+    /// (checked against its live identity); null otherwise. The only remote the trust prompt may call verified.
+    /// </summary>
+    string? VerifiedCloneSource(string itemId) => null;
+
     /// <summary>Detected profiles + user custom profiles.</summary>
     IReadOnlyList<RunProfile> GetProfiles(string itemId);
     bool IsForgotten(CatalogItem item);

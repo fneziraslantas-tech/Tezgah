@@ -323,8 +323,10 @@ internal sealed class CatalogService : ICatalogService, IDisposable
     }
 
     /// <summary>
-    /// Revokes trust (never touches favorites, tags or notes) for filesystem items whose identity no longer matches the
-    /// trusted one and, when <paramref name="pruneMissingPaths"/>, for path ids that no longer have an item.
+    /// Revokes trust and the "cloned by Tezgah" mark (never touches favorites, tags or notes) for filesystem items whose
+    /// identity no longer matches the one each was recorded for and, when <paramref name="pruneMissingPaths"/>, for path ids
+    /// that no longer have an item. The clone mark is reconciled for untrusted entries too: it must never outlive the
+    /// folder Tezgah cloned.
     /// </summary>
     internal static IReadOnlyDictionary<string, UserMeta> ReconcileTrust(
         IReadOnlyList<CatalogItem> items, IReadOnlyDictionary<string, UserMeta> meta, bool pruneMissingPaths)
@@ -333,32 +335,58 @@ internal sealed class CatalogService : ICatalogService, IDisposable
         var byId = items.ToDictionary(i => i.Id, StringComparer.Ordinal);
         foreach (var (id, m) in meta)
         {
-            if (m is null || !m.Trusted)
+            if (m is null || (!m.Trusted && m.ClonedFrom is null && m.CloneAnchor is null))
             {
                 continue;
             }
 
-            bool revoke;
-            if (byId.TryGetValue(id, out var item))
+            byId.TryGetValue(id, out var item);
+            var gone = item is null && pruneMissingPaths && id.StartsWith("path:", StringComparison.Ordinal);
+            bool Replaced(string? recorded) =>
+                item is not null ? item.Source == Sources.FileSystem && (TrustAnchorOf(item) is not { } anchor || recorded != anchor) : gone;
+
+            var updated = m;
+            if (updated.Trusted && Replaced(updated.TrustAnchor))
             {
-                revoke = item.Source == Sources.FileSystem && (TrustAnchorOf(item) is not { } anchor || m.TrustAnchor != anchor);
-            }
-            else
-            {
-                revoke = pruneMissingPaths && id.StartsWith("path:", StringComparison.Ordinal);
+                updated = RevokedTrust(updated);
             }
 
-            if (revoke)
+            if ((updated.ClonedFrom is not null || updated.CloneAnchor is not null) && Replaced(updated.CloneAnchor))
+            {
+                updated = WithoutClone(updated);
+            }
+
+            if (!ReferenceEquals(updated, m))
             {
                 changed ??= new Dictionary<string, UserMeta>(meta, StringComparer.Ordinal);
-                changed[id] = RevokedTrust(m);
+                changed[id] = updated;
             }
         }
 
         return changed ?? meta;
     }
 
-    private static UserMeta RevokedTrust(UserMeta m) => m with { Trusted = false, TrustAnchor = null, ClonedFrom = null };
+    private static UserMeta RevokedTrust(UserMeta m) => WithoutClone(m with { Trusted = false, TrustAnchor = null });
+
+    private static UserMeta WithoutClone(UserMeta m) => m with { ClonedFrom = null, CloneAnchor = null };
+
+    /// <summary>
+    /// <see cref="UserMeta.ClonedFrom"/> when Tezgah cloned the folder that lives at the item's path right now (recorded
+    /// clone anchor = inspected identity = live identity); null otherwise.
+    /// </summary>
+    public string? VerifiedCloneSource(string itemId)
+    {
+        ArgumentNullException.ThrowIfNull(itemId);
+        var state = State;
+        if (state.Items.FirstOrDefault(i => i.Id == itemId) is not { Source: Sources.FileSystem } item
+            || state.Meta.GetValueOrDefault(itemId) is not { ClonedFrom: { } url, CloneAnchor: { Length: > 0 } anchor })
+        {
+            return null;
+        }
+
+        return string.Equals(anchor, TrustAnchorOf(item), StringComparison.Ordinal)
+            && string.Equals(anchor, LiveTrustAnchor(item.Path), StringComparison.Ordinal) ? url : null;
+    }
 
     private static CatalogItem WithMetaActivity(CatalogItem item, IReadOnlyDictionary<string, UserMeta> meta)
     {
@@ -433,7 +461,8 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             }
 
             var meta = s.Meta;
-            if (fresh is null && existing.Source == Sources.FileSystem && meta.TryGetValue(itemId, out var gone) && gone is { Trusted: true })
+            if (fresh is null && existing.Source == Sources.FileSystem && meta.TryGetValue(itemId, out var gone)
+                && gone is { Trusted: true } or { ClonedFrom: not null } or { CloneAnchor: not null })
             {
                 meta = new Dictionary<string, UserMeta>(meta, StringComparer.Ordinal) { [itemId] = RevokedTrust(gone) };
             }
@@ -477,6 +506,22 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             else if (!updated.Trusted)
             {
                 updated = updated with { TrustAnchor = null };
+            }
+
+            if (updated.ClonedFrom is null)
+            {
+                updated = updated with { CloneAnchor = null };
+            }
+            else if (!string.Equals(updated.ClonedFrom, current.ClonedFrom, StringComparison.Ordinal))
+            {
+                // "Cloned by Tezgah" is bound to the folder identity right after the clone, like trust: it is dropped when a
+                // different folder later lives at the path. Unknown identity: never verified (dropped on the next reconcile).
+                updated = updated with { CloneAnchor = s.Items.FirstOrDefault(i => i.Id == itemId) is { } clonedItem ? TrustAnchorOf(clonedItem) : null };
+            }
+            else
+            {
+                // Unrelated edits never re-bind an existing mark to whatever folder is at the path now.
+                updated = updated with { CloneAnchor = current.CloneAnchor };
             }
 
             meta[itemId] = updated;
@@ -541,7 +586,7 @@ internal sealed class CatalogService : ICatalogService, IDisposable
             var items = s.Items.Where(i => i.Id != item.Id).ToList();
             items.Add(WithMetaActivity(item, s.Meta));
             var meta = s.Meta;
-            if (!wasLive && meta.TryGetValue(item.Id, out var stale) && stale is not null && (stale.Trusted || stale.ClonedFrom is not null))
+            if (!wasLive && meta.TryGetValue(item.Id, out var stale) && stale is not null && (stale.Trusted || stale.ClonedFrom is not null || stale.CloneAnchor is not null))
             {
                 // A folder that (re)appears at a path never inherits trust recorded for whatever was there before.
                 meta = new Dictionary<string, UserMeta>(meta, StringComparer.Ordinal) { [item.Id] = RevokedTrust(stale) };

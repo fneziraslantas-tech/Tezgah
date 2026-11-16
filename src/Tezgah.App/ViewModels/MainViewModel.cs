@@ -790,10 +790,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        var meta = _catalog.GetMeta(item.Id);
+        // "Cloned by Tezgah" only while the folder at the path is the one Tezgah cloned (live identity check in the catalog).
+        var cloned = _catalog.VerifiedCloneSource(item.Id);
         var claimed = item.Git?.RemoteUrl ?? item.Item.WebUrl;
-        var verified = meta.ClonedFrom is { } cloned && (claimed is null || string.Equals(cloned, claimed, StringComparison.OrdinalIgnoreCase));
-        var prompt = new TrustPrompt(item.Name, item.Path, verified ? meta.ClonedFrom : claimed, shownCommand, verified);
+        var verified = cloned is not null && (claimed is null || string.Equals(cloned, claimed, StringComparison.OrdinalIgnoreCase));
+        var prompt = new TrustPrompt(item.Name, item.Path, verified ? cloned : claimed, shownCommand, verified);
         if (!_dialogs.ConfirmTrust(prompt))
         {
             return false;

@@ -53,6 +53,8 @@ public class TrustPromptBindingTests
 
         public UserMeta GetMeta(string itemId) => inner.GetMeta(itemId);
 
+        public string? VerifiedCloneSource(string itemId) => inner.VerifiedCloneSource(itemId);
+
         public bool IsTrusted(string itemId) => inner.GetMeta(itemId).Trusted && !Stale.Contains(itemId);
 
         public IReadOnlyList<RunProfile> GetProfiles(string itemId) => inner.GetProfiles(itemId);

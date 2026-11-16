@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Tezgah.Core.Abstractions;
 using Tezgah.Core.Catalog;
+using Tezgah.Core.Discovery;
 using Tezgah.Core.Model;
 using Tezgah.Core.Tests.Discovery;
 
@@ -207,6 +208,145 @@ public sealed class CatalogTrustTests : IDisposable
         await svc.UpdateMetaAsync(id, m => m with { Trusted = true }, CancellationToken.None);
         Assert.True(svc.IsTrusted(id));
         Assert.StartsWith("fid1:", svc.GetMeta(id).TrustAnchor, StringComparison.Ordinal);
+    }
+
+    /// <summary>Finds the given folders like the real filesystem provider would (whatever is at the path now).</summary>
+    private sealed class InspectingFsProvider(ProjectInspector inspector, params string[] paths) : IDiscoveryProvider
+    {
+        public string Id => Sources.FileSystem;
+
+        public Task<bool> IsAvailableAsync(CancellationToken ct) => Task.FromResult(true);
+
+        public async Task<IReadOnlyList<CatalogItem>> DiscoverAsync(TezgahSettings settings, IProgress<ScanProgress>? progress, CancellationToken ct)
+        {
+            var found = new List<CatalogItem>();
+            foreach (var p in paths)
+            {
+                if (await inspector.InspectAsync(p, fetchGit: false, force: false, computeSize: false, ct) is { } item)
+                {
+                    found.Add(item);
+                }
+            }
+
+            return found;
+        }
+    }
+
+    private const string CloneUrl = "https://example.invalid/a/b";
+
+    private CatalogService NewScanningService(string path)
+    {
+        var git = new FetchRecordingGit();
+        return new CatalogService([new InspectingFsProvider(DetectorTests.NewInspector(git), path)], new CatalogStore(Path.Combine(_dir.Path, "c.json")), git,
+            DetectorTests.NewInspector(git), NullLogger<CatalogService>.Instance);
+    }
+
+    private string NodeProject(string name, string script)
+    {
+        var p = _dir.Sub(name);
+        File.WriteAllText(Path.Combine(p, "package.json"), $$"""{ "name": "{{name}}", "scripts": { "start": "{{script}}" } }""");
+        return p;
+    }
+
+    /// <summary>The state CloneAsync leaves behind: an untrusted folder marked "cloned by Tezgah" and bound to its identity.</summary>
+    private static async Task<CatalogItem> MarkClonedAsync(CatalogService svc, string path)
+    {
+        var item = (await svc.AddFolderAsync(path, CancellationToken.None))!;
+        await svc.UpdateMetaAsync(item.Id, m => m with { Trusted = false, TrustAnchor = null, ClonedFrom = CloneUrl }, CancellationToken.None);
+        Assert.Equal(CatalogService.LiveTrustAnchor(path), svc.GetMeta(item.Id).CloneAnchor);
+        Assert.Equal(CloneUrl, svc.VerifiedCloneSource(item.Id));
+        return item;
+    }
+
+    [Fact]
+    public async Task Clone_mark_is_dropped_when_an_untrusted_clone_is_replaced()
+    {
+        var path = NodeProject("cloned", "node a.js");
+        using var svc = NewScanningService(path);
+        var item = await MarkClonedAsync(svc, path);
+        await svc.ScanAsync(null, CancellationToken.None);
+        Assert.Equal(CloneUrl, svc.GetMeta(item.Id).ClonedFrom); // same folder: the mark survives a rescan
+
+        // Deleted outside Tezgah and replaced by different code (no .git, no homepage) before the next scan.
+        Directory.Delete(path, true);
+        NodeProject("cloned", "node evil.js");
+        Assert.Null(svc.VerifiedCloneSource(item.Id)); // not "cloned by Tezgah" even before any rescan
+
+        await svc.ScanAsync(null, CancellationToken.None);
+
+        Assert.Contains(svc.State.Items, i => i.Id == item.Id);
+        Assert.Null(svc.GetMeta(item.Id).ClonedFrom);
+        Assert.Null(svc.GetMeta(item.Id).CloneAnchor);
+        Assert.Null(svc.VerifiedCloneSource(item.Id));
+    }
+
+    [Fact]
+    public async Task Clone_mark_is_dropped_when_a_scan_sees_the_clone_missing()
+    {
+        var path = NodeProject("cloned2", "node a.js");
+        using var svc = NewScanningService(path);
+        var item = await MarkClonedAsync(svc, path);
+
+        Directory.Delete(path, true);
+        await svc.ScanAsync(null, CancellationToken.None);
+        Assert.Null(svc.GetMeta(item.Id).ClonedFrom);
+
+        NodeProject("cloned2", "node evil.js");
+        await svc.ScanAsync(null, CancellationToken.None);
+
+        Assert.Contains(svc.State.Items, i => i.Id == item.Id);
+        Assert.Null(svc.GetMeta(item.Id).ClonedFrom);
+        Assert.Null(svc.VerifiedCloneSource(item.Id));
+    }
+
+    [Fact]
+    public async Task Refresh_of_a_replaced_or_deleted_clone_drops_the_mark()
+    {
+        var path = NodeProject("cloned3", "node a.js");
+        using var svc = NewScanningService(path);
+        var item = await MarkClonedAsync(svc, path);
+
+        Directory.Delete(path, true);
+        NodeProject("cloned3", "node evil.js");
+        await svc.RefreshItemAsync(item.Id, fetchGit: false, CancellationToken.None);
+        Assert.Null(svc.GetMeta(item.Id).ClonedFrom);
+
+        item = await MarkClonedAsync(svc, path);
+        Directory.Delete(path, true);
+        await svc.RefreshItemAsync(item.Id, fetchGit: false, CancellationToken.None);
+        Assert.Null(svc.GetMeta(item.Id).ClonedFrom);
+    }
+
+    [Fact]
+    public async Task Unrelated_meta_edits_never_rebind_the_clone_mark_to_a_replaced_folder()
+    {
+        var path = NodeProject("cloned4", "node a.js");
+        using var svc = NewScanningService(path);
+        var item = await MarkClonedAsync(svc, path);
+        var anchor = svc.GetMeta(item.Id).CloneAnchor;
+
+        Directory.Delete(path, true);
+        NodeProject("cloned4", "node evil.js");
+        await svc.UpdateMetaAsync(item.Id, m => m with { Favorite = true, CloneAnchor = CatalogService.LiveTrustAnchor(path) }, CancellationToken.None);
+
+        Assert.Equal(anchor, svc.GetMeta(item.Id).CloneAnchor);
+        Assert.Null(svc.VerifiedCloneSource(item.Id));
+    }
+
+    [Fact]
+    public void Reconcile_drops_the_clone_mark_of_untrusted_entries()
+    {
+        var a = new CatalogItem { Id = "path:c:\\a", Kind = ItemKind.ProjectFolder, Source = Sources.FileSystem, Name = "a", Path = @"C:\a", FolderIdentity = "fid1:1:2:3" };
+        UserMeta Cloned(string? anchor) => new() { Trusted = false, ClonedFrom = CloneUrl, CloneAnchor = anchor, Favorite = true };
+
+        // Missing path (pruned), different folder, unknown identity: dropped; same folder: kept. Other user data stays.
+        var missing = CatalogService.ReconcileTrust([], new Dictionary<string, UserMeta> { [a.Id] = Cloned("fid1:1:2:3") }, pruneMissingPaths: true);
+        Assert.Null(missing[a.Id].ClonedFrom);
+        Assert.True(missing[a.Id].Favorite);
+        Assert.Null(CatalogService.ReconcileTrust([a], new Dictionary<string, UserMeta> { [a.Id] = Cloned("fid1:9:9:9") }, false)[a.Id].ClonedFrom);
+        Assert.Null(CatalogService.ReconcileTrust([a], new Dictionary<string, UserMeta> { [a.Id] = Cloned(null) }, false)[a.Id].ClonedFrom);
+        Assert.Null(CatalogService.ReconcileTrust([a with { FolderIdentity = null }], new Dictionary<string, UserMeta> { [a.Id] = Cloned("fid1:1:2:3") }, false)[a.Id].ClonedFrom);
+        Assert.Equal(CloneUrl, CatalogService.ReconcileTrust([a], new Dictionary<string, UserMeta> { [a.Id] = Cloned("fid1:1:2:3") }, false)[a.Id].ClonedFrom);
     }
 
     [Fact]
