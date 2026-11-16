@@ -63,7 +63,9 @@ internal sealed class ProcessFinder : IProcessFinder
         try
         {
             using var p = Process.GetProcessById(process.ProcessId);
-            p.Kill(entireProcessTree: true);
+            // Only this process: descendants whose images live elsewhere (an editor or shell started from a terminal in
+            // the folder) are the user's other work. In-folder descendants are found and stopped on their own.
+            p.Kill(entireProcessTree: false);
             return p.WaitForExit(TimeSpan.FromSeconds(5));
         }
         catch (ArgumentException)
