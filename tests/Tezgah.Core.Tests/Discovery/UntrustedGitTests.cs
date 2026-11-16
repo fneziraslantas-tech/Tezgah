@@ -451,6 +451,41 @@ public sealed class UntrustedGitTests : IDisposable
         Assert.False(GitMetadataReader.Read(noUpstream)!.AheadBehindUnknown);
     }
 
+    [Theory]
+    [InlineData(@"excludesFile = \\??\\UNC\\192.0.2.77\\share\\x")] // as `git config core.excludesFile '\??\UNC\...'` writes it
+    [InlineData(@"excludesFile = \\??\\GLOBALROOT\\Device\\Mup\\192.0.2.77\\share\\x")]
+    [InlineData(@"attributesFile = /??/UNC/192.0.2.77/share/x")]
+    [InlineData(@"excludesFile = ""\\??\\unc\\192.0.2.77\\share\\x""")]
+    [InlineData(@"excludesFile = \\\\?\\UNC\\192.0.2.77\\share\\x")]
+    [InlineData(@"excludesFile = \\\\.\\UNC\\192.0.2.77\\share\\x")]
+    [InlineData(@"excludesFile = %(prefix)//192.0.2.77/share/x")]
+    [InlineData(@"excludesFile = C:\\x\\GLOBALROOT\\y")]
+    public async Task Nt_namespace_config_value_is_refused_before_git_runs(string line)
+    {
+        // Reviewer PoC: core.excludesFile = \??\UNC\host\share passed LooksRemote, so `git status` during uninstall
+        // planning opened the share through CreateFileW (SMB SynSent, NTLM attempt, 15 s stall).
+        var repo = _dir.Sub("nt" + Guid.NewGuid().ToString("N")[..6]);
+        var gitDir = _dir.Sub(Path.GetFileName(repo), ".git");
+        File.WriteAllText(Path.Combine(gitDir, "HEAD"), "ref: refs/heads/main\n");
+        File.WriteAllText(Path.Combine(gitDir, "config"), "[core]\n\tbare = false\n\t" + line + "\n");
+        Assert.False(GitRepoGuard.TryResolveLocalGitDir(repo, out _, out var reason));
+        Assert.Contains("network", reason, StringComparison.Ordinal);
+        await AssertRefusedWithoutGitAsync(repo);
+    }
+
+    [Theory]
+    [InlineData(@"\??\UNC\host\share\x", true)]
+    [InlineData(@"\??\GLOBALROOT\Device\Mup\host\share\x", true)]
+    [InlineData("/??/UNC/host/share/x", true)]
+    [InlineData(@"\\?\UNC\host\share", true)]
+    [InlineData(@"\\.\pipe\x", true)]
+    [InlineData(@"C:\Users\me\.gitignore_global", false)]
+    [InlineData("~/.gitignore", false)]
+    [InlineData("https://example.com/x.git", false)]
+    [InlineData("refs/heads/main", false)]
+    public void LooksRemote_rejects_nt_and_device_namespaces(string value, bool remote) =>
+        Assert.Equal(remote, GitRepoGuard.LooksRemote(value));
+
     private static async Task AssertRefusedWithoutGitAsync(string repo)
     {
         // Uninstall planning path: the guard refuses, so no git process runs and the state is unknown (fail closed).

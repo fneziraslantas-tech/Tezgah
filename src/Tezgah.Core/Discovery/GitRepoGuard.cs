@@ -407,12 +407,26 @@ internal static class GitRepoGuard
         return true;
     }
 
-    /// <summary>True for values git might treat as a network path (UNC, device, //host, file://host).</summary>
+    /// <summary>
+    /// True for values git might treat as a network or NT-namespace path: UNC (\\host, //host, mixed slashes), the
+    /// Win32 device and NT object-namespace prefixes (\\?\, \\.\, \??\, /??/), anything naming GLOBALROOT or the
+    /// multiple UNC provider (Mup), and file://host URLs. Git for Windows hands pathname values (core.excludesFile,
+    /// core.attributesFile...) straight to CreateFileW, which accepts all of these and would open an SMB/WebDAV share.
+    /// </summary>
     internal static bool LooksRemote(string value)
     {
         var v = value.Trim();
-        if (v.StartsWith(@"\\", StringComparison.Ordinal) || v.StartsWith("//", StringComparison.Ordinal)
-            || v.StartsWith(@"\/", StringComparison.Ordinal) || v.StartsWith(@"/\", StringComparison.Ordinal))
+
+        // "%(prefix)/" is git's runtime-prefix placeholder; judge what follows it.
+        if (v.StartsWith("%(prefix)", StringComparison.OrdinalIgnoreCase))
+        {
+            v = v["%(prefix)".Length..];
+        }
+
+        var n = v.Replace('/', '\\');
+        if (n.StartsWith(@"\\", StringComparison.Ordinal) || n.StartsWith(@"\??\", StringComparison.Ordinal)
+            || n.Contains(@"\??\", StringComparison.Ordinal) || n.Contains("GLOBALROOT", StringComparison.OrdinalIgnoreCase)
+            || n.Contains(@"\Device\Mup", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
