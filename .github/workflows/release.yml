@@ -20,7 +20,16 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
+      # The tag is attacker-shaped input as far as a script is concerned: it reaches the shell only through env and only
+      # after it matched vX.Y.Z (ASCII digits); later steps use the validated TEZGAH_VERSION, never github.ref_name.
+      - name: Version from tag
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:TAG -cnotmatch '\Av([0-9]+\.[0-9]+\.[0-9]+)\z') { throw "Release tags must look like v1.2.3; got '$env:TAG'" }
+          "TEZGAH_VERSION=$($Matches[1])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: "Restore (locked: packages.lock.json must match)"
         run: dotnet restore Tezgah.sln --locked-mode
       - run: dotnet test Tezgah.sln -c Release --no-restore
@@ -28,11 +37,17 @@ jobs:
       # makes the SDK add an implicit Microsoft.NET.ILLink.Tasks reference whose version follows the SDK patch, so it
       # cannot be pinned in packages.lock.json; only this final build step relaxes locked mode to let it in (nothing reads the lock files afterwards).
       - name: Publish (self-contained single file)
-        run: dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false -o out
-      - shell: pwsh
+        shell: pwsh
+        run: dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false "-p:Version=$env:TEZGAH_VERSION" -o out
+      - name: Check the version baked into Tezgah.exe
+        shell: pwsh
+        run: ./.github/scripts/Assert-ExeVersion.ps1 -Exe out/Tezgah.exe -Expected $env:TEZGAH_VERSION
+      - name: Zip and hash
+        shell: pwsh
         run: |
-          Compress-Archive -Path out/* -DestinationPath Tezgah-${{ github.ref_name }}-win-x64.zip
-          (Get-FileHash Tezgah-${{ github.ref_name }}-win-x64.zip -Algorithm SHA256).Hash | Out-File -Encoding ascii Tezgah-${{ github.ref_name }}-win-x64.zip.sha256
+          $zip = "Tezgah-v$env:TEZGAH_VERSION-win-x64.zip"
+          Compress-Archive -Path out/* -DestinationPath $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash | Out-File -Encoding ascii "$zip.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-files

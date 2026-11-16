@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
       - name: Restore (NuGet audit fails on known vulnerabilities)
         run: dotnet restore Tezgah.sln --locked-mode
       - name: Build (warnings as errors, analyzers on)
@@ -39,8 +39,9 @@ jobs:
       - name: Publish smoke test (same command as release.yml)
         shell: pwsh
         run: |
-          dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false -o "$env:RUNNER_TEMP/publish-smoke"
-          if (-not (Test-Path "$env:RUNNER_TEMP/publish-smoke/Tezgah.exe")) { throw 'Tezgah.exe was not produced' }
+          # release.yml passes the tag's version the same way; a sentinel version proves it reaches the exe.
+          dotnet publish src/Tezgah.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RestoreLockedMode=false -p:Version=9.8.7 -o "$env:RUNNER_TEMP/publish-smoke"
+          ./.github/scripts/Assert-ExeVersion.ps1 -Exe "$env:RUNNER_TEMP/publish-smoke/Tezgah.exe" -Expected 9.8.7
           # Unlocked publish adds the SDK-implicit ILLink.Tasks to the lock files; undo that on the runner.
           git checkout -- '**/packages.lock.json'
       - name: Upload test results

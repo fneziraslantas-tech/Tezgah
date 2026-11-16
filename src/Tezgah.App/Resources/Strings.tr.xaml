@@ -148,6 +148,7 @@
     <sys:String x:Key="Trust_Footnote">Bir kez onayladığında bu klasör "güvenilir" olarak işaretlenir ve bir daha sorulmaz.</sys:String>
     <sys:String x:Key="Trust_Confirm">Güven ve çalıştır</sys:String>
     <sys:String x:Key="Trust_Cancel">Vazgeç</sys:String>
+    <sys:String x:Key="Trust_OpenTerminal">Bu klasörde terminal aç (kabuk profilin ve istemin burada çalışır: git bilgisi gösteren istemler deponun ayarlarını okur, direnv gibi kancalar klasördeki betikleri yükler)</sys:String>
 
     <!-- kaldırma -->
     <sys:String x:Key="Uninstall_Title">{0} kaldırılsın mı?</sys:String>

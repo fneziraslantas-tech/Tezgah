@@ -47,7 +47,7 @@ Tezgah, geliştiricinin Windows bilgisayarını tarayan açık kaynak bir masaü
 [Releases](https://github.com/fneziraslantas-tech/Tezgah/releases) sayfasından `Tezgah-vX.Y.Z-win-x64.zip` dosyasını indir, bir klasöre aç ve `Tezgah.exe`'yi çalıştır. Paket kendi içinde .NET çalışma zamanını taşır; ayrıca kurulum gerekmez. Her zip'in yanında SHA-256 özeti ve GitHub derleme kaynağı kanıtı (build provenance attestation) bulunur:
 
 ```powershell
-gh attestation verify Tezgah-vX.Y.Z-win-x64.zip --repo fneziraslantas-tech/Tezgah
+gh attestation verify Tezgah-vX.Y.Z-win-x64.zip --repo fneziraslantas-tech/Tezgah --signer-workflow fneziraslantas-tech/Tezgah/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z
 (Get-FileHash Tezgah-vX.Y.Z-win-x64.zip -Algorithm SHA256).Hash -eq (Get-Content Tezgah-vX.Y.Z-win-x64.zip.sha256).Trim()
 ```
 
@@ -57,7 +57,7 @@ Sürümler arası değişiklikler: [CHANGELOG.md](CHANGELOG.md).
 
 ### Kaynaktan derleme
 
-Gerekenler: Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), git.
+Gerekenler: Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (`global.json`'daki 10.0.3xx bandı, 10.0.302 veya daha yeni bir yama), git.
 
 ```powershell
 git clone https://github.com/fneziraslantas-tech/Tezgah.git
@@ -183,13 +183,13 @@ Tezgah ("workbench" in Turkish) is an open-source Windows desktop app that scans
 
 ### Install
 
-**Release:** download `Tezgah-vX.Y.Z-win-x64.zip` from [Releases](https://github.com/fneziraslantas-tech/Tezgah/releases), unzip, run `Tezgah.exe` (self-contained, no .NET install needed). Each zip ships with a SHA-256 file and a GitHub build provenance attestation (`gh attestation verify <zip> --repo fneziraslantas-tech/Tezgah`).
+**Release:** download `Tezgah-vX.Y.Z-win-x64.zip` from [Releases](https://github.com/fneziraslantas-tech/Tezgah/releases), unzip, run `Tezgah.exe` (self-contained, no .NET install needed). Each zip ships with a SHA-256 file and a GitHub build provenance attestation (`gh attestation verify <zip> --repo fneziraslantas-tech/Tezgah --signer-workflow fneziraslantas-tech/Tezgah/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z`; the last two flags make sure the zip was built by this repository's release workflow from that tag, not by any other workflow).
 
 > **Windows SmartScreen:** `Tezgah.exe` is not code-signed, so SmartScreen may show "Windows protected your PC" on first run. Verify the SHA-256 (`(Get-FileHash <zip> -Algorithm SHA256).Hash` against the `.sha256` file) and the attestation first, then choose **More info** → **Run anyway**.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md).
 
-**From source:** Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and git.
+**From source:** Windows 10/11, [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (the 10.0.3xx band pinned in `global.json`: 10.0.302 or a later patch) and git.
 
 ```powershell
 git clone https://github.com/fneziraslantas-tech/Tezgah.git

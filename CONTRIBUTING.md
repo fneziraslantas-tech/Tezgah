@@ -18,6 +18,16 @@ dotnet test             # unit, UI and end-to-end tests; all must pass
 dotnet run --project src/Tezgah.App -- --demo   # try the UI with sample data
 ```
 
+**SDK:** `global.json` pins the .NET SDK to the 10.0.3xx feature band (10.0.302 or a later patch, `rollForward:
+latestPatch`); CI installs exactly that version. A newer feature band (10.0.4xx) is deliberately not accepted: the
+self-contained publish pulls SDK-implicit packages such as `Microsoft.NET.ILLink.Tasks` whose version follows the SDK,
+so CI, the release build and local builds should use the same SDK. Moving to a new band is a one-line PR to
+`global.json` (CI then proves restore, tests and the publish smoke test on it).
+
+**Versions:** `Directory.Build.props` carries a `-dev` version for local builds. A release takes its version only from
+the `vX.Y.Z` tag (`release.yml` validates the tag and passes `-p:Version`), and CI checks that the version passed to
+`dotnet publish` is the one in `Tezgah.exe`. After a release, bump the `-dev` version to the next patch.
+
 ## Guidelines
 
 - **Layers:** `Tezgah.Core` has no UI dependency; the WPF app talks to it only through `Tezgah.Core.Abstractions`.
