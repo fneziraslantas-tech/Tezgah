@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.IO.Compression;
 using System.Text;
@@ -39,6 +40,28 @@ internal static class GitMetadataReader
         try
         {
             return new Repo(gitDir!, commonDir!).Read(Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidDataException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Only the stash count and the linked worktrees, which the git CLI path takes from this reader: no ref is resolved for
+    /// ahead/behind and no commit is read (git already computed those). Null where <see cref="Read"/> would be null.
+    /// </summary>
+    public static (int Stashes, IReadOnlyList<string> LinkedWorktrees)? ReadLocalState(string worktree)
+    {
+        if (!GitRepoGuard.TryLocateGitDirs(worktree, out var gitDir, out var commonDir, out _))
+        {
+            return null;
+        }
+
+        try
+        {
+            var repo = new Repo(gitDir!, commonDir!);
+            return (repo.CountStashes(), repo.LinkedWorktrees(Path.TrimEndingDirectorySeparator(Path.GetFullPath(worktree))));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidDataException or FormatException)
         {
@@ -184,8 +207,49 @@ internal static class GitMetadataReader
     internal static bool IsObjectId(string s) =>
         s.Length is 40 or 64 && s.All(char.IsAsciiHexDigitLower);
 
+    /// <summary>First decompression buffer for a commit; commit objects are usually well under 1 KB.</summary>
+    private const int InitialCommitBuffer = 4 * 1024;
+
+    /// <summary>Parsed commits kept per <see cref="Repo"/>, so both Distance directions and OnRemote's walks share them.</summary>
+    private const int MaxCachedCommits = 4096;
+
+    /// <summary>
+    /// Length of the prefix of an inflated commit object that holds the object header, the commit headers, the blank line
+    /// and the first message line (through its newline); -1 while more data is needed.
+    /// </summary>
+    internal static int CommitPrefixLength(ReadOnlySpan<byte> data)
+    {
+        var nul = data.IndexOf((byte)0);
+        if (nul < 0)
+        {
+            return -1;
+        }
+
+        var body = data[(nul + 1)..];
+        int blank;
+        if (body.Length > 0 && body[0] == (byte)'\n')
+        {
+            blank = 0;
+        }
+        else
+        {
+            var b = body.IndexOf("\n\n"u8);
+            if (b < 0)
+            {
+                return -1;
+            }
+
+            blank = b + 1;
+        }
+
+        var subjectStart = blank + 1;
+        var nl = body[subjectStart..].IndexOf((byte)'\n');
+        return nl < 0 ? -1 : nul + 1 + subjectStart + nl + 1;
+    }
+
     private sealed class Repo(string gitDir, string commonDir)
     {
+        private readonly Dictionary<string, Commit?> _commits = new(StringComparer.Ordinal);
         private Dictionary<string, string>? _packed;
 
         public GitInfo Read(string worktree)
@@ -511,8 +575,28 @@ internal static class GitMetadataReader
 
         private sealed record Commit(IReadOnlyList<string> Parents, DateTimeOffset? CommittedAt, string? Subject);
 
-        /// <summary>Reads a loose commit object (zlib); null when it is packed, missing, not a commit or malformed.</summary>
+        /// <summary>Reads a loose commit object (zlib); null when it is packed, missing, not a commit or malformed. Memoized.</summary>
         private Commit? ReadCommit(string id)
+        {
+            if (_commits.TryGetValue(id, out var cached))
+            {
+                return cached;
+            }
+
+            var commit = LoadCommit(id);
+            if (_commits.Count < MaxCachedCommits)
+            {
+                _commits[id] = commit;
+            }
+
+            return commit;
+        }
+
+        /// <summary>
+        /// Inflates only what the parents, committer and subject need (see <see cref="CommitPrefixLength"/>), into a pooled
+        /// buffer that starts small and grows up to <see cref="MaxCommitBytes"/>.
+        /// </summary>
+        private Commit? LoadCommit(string id)
         {
             if (!IsObjectId(id))
             {
@@ -525,28 +609,63 @@ internal static class GitMetadataReader
                 return null;
             }
 
-            byte[] data;
-            using (var file = File.OpenRead(path))
-            using (var z = new ZLibStream(file, CompressionMode.Decompress))
+            const int cap = MaxCommitBytes + 64;
+            var buffer = ArrayPool<byte>.Shared.Rent(InitialCommitBuffer);
+            try
             {
-                var buffer = new byte[MaxCommitBytes + 64];
                 var total = 0;
-                int read;
-                while (total < buffer.Length && (read = z.Read(buffer, total, buffer.Length - total)) > 0)
+                using (var file = File.OpenRead(path))
+                using (var z = new ZLibStream(file, CompressionMode.Decompress))
                 {
-                    total += read;
+                    while (true)
+                    {
+                        var limit = Math.Min(buffer.Length, cap);
+                        if (total == limit)
+                        {
+                            if (limit == cap)
+                            {
+                                break;
+                            }
+
+                            var bigger = ArrayPool<byte>.Shared.Rent(Math.Min(buffer.Length * 2, cap));
+                            buffer.AsSpan(0, total).CopyTo(bigger);
+                            ArrayPool<byte>.Shared.Return(buffer);
+                            buffer = bigger;
+                            continue;
+                        }
+
+                        var read = z.Read(buffer, total, limit - total);
+                        if (read == 0)
+                        {
+                            break;
+                        }
+
+                        total += read;
+                        if (CommitPrefixLength(buffer.AsSpan(0, total)) >= 0)
+                        {
+                            break;
+                        }
+                    }
                 }
 
-                data = buffer[..total];
+                return ParseCommit(buffer.AsSpan(0, total));
             }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
 
-            var nul = Array.IndexOf(data, (byte)0);
-            if (nul < 0 || !Encoding.ASCII.GetString(data, 0, nul).StartsWith("commit ", StringComparison.Ordinal))
+        private static Commit? ParseCommit(ReadOnlySpan<byte> data)
+        {
+            var nul = data.IndexOf((byte)0);
+            if (nul < 0 || !data[..nul].StartsWith("commit "u8))
             {
                 return null;
             }
 
-            var text = Encoding.UTF8.GetString(data, nul + 1, data.Length - nul - 1);
+            var needed = CommitPrefixLength(data);
+            var text = Encoding.UTF8.GetString(needed >= 0 ? data[(nul + 1)..needed] : data[(nul + 1)..]);
             var parents = new List<string>();
             DateTimeOffset? committed = null;
             var lines = text.Split('\n');
@@ -571,7 +690,7 @@ internal static class GitMetadataReader
             return new Commit(parents, committed, string.IsNullOrEmpty(subject) ? null : subject);
         }
 
-        private int CountStashes()
+        public int CountStashes()
         {
             if (ResolveRef("refs/stash") is null)
             {
@@ -589,7 +708,7 @@ internal static class GitMetadataReader
         }
 
         /// <summary>Linked worktrees registered in the main repository (paths only: nothing at those paths is touched).</summary>
-        private List<string> LinkedWorktrees(string worktree)
+        public List<string> LinkedWorktrees(string worktree)
         {
             if (!string.Equals(gitDir, commonDir, StringComparison.OrdinalIgnoreCase))
             {
@@ -663,9 +782,18 @@ internal static class GitMetadataReader
             using var fs = File.OpenRead(path);
             var take = (int)Math.Min(length, 16 * 1024);
             fs.Seek(-take, SeekOrigin.End);
-            var buffer = new byte[take];
-            fs.ReadExactly(buffer);
-            var text = Encoding.UTF8.GetString(buffer).TrimEnd('\n', '\r');
+            var buffer = ArrayPool<byte>.Shared.Rent(take);
+            string text;
+            try
+            {
+                fs.ReadExactly(buffer, 0, take);
+                text = Encoding.UTF8.GetString(buffer, 0, take).TrimEnd('\n', '\r');
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
             var nl = text.LastIndexOf('\n');
             return nl >= 0 ? text[(nl + 1)..].TrimEnd('\r') : (take == length ? text : null);
         }

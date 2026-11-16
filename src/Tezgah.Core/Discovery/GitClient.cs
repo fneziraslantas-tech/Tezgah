@@ -167,7 +167,9 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         }
 
         var parsed = GitStatusParser.Parse(status.StdOut);
-        var metadata = new Lazy<GitInfo?>(() => GitMetadataReader.Read(repoPath));
+        // Only the stash count and linked worktrees come from the managed reader: git computes everything else, so the
+        // reader's ahead/behind commit walks (up to hundreds of commit inflations) are not repeated here.
+        var metadata = new Lazy<(int Stashes, IReadOnlyList<string> LinkedWorktrees)?>(() => GitMetadataReader.ReadLocalState(repoPath));
         var stashes = parsed.Stashes;
         if (stashes is null)
         {
