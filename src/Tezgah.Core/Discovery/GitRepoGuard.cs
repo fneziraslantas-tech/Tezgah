@@ -19,7 +19,8 @@ namespace Tezgah.Core.Discovery;
 /// fails closed on anything it cannot fully parse or that redirects git elsewhere: config it cannot parse (value
 /// continuation lines included), any include/includeIf, <c>core.worktree</c>, <c>extensions.worktreeConfig</c> /
 /// <c>config.worktree</c>, UNC-looking config values, alternates outside local drives or chained alternates,
-/// http-alternates, submodule gitdirs outside the repository, and link reparse points anywhere inside the git data.</item>
+/// http-alternates, linked-worktree back-pointers (<c>worktrees/*/gitdir</c>) that are not local, submodule gitdirs outside the
+/// repository, and link reparse points anywhere inside the git data.</item>
 /// </list>
 /// </remarks>
 internal static class GitRepoGuard
@@ -27,6 +28,7 @@ internal static class GitRepoGuard
     private const int MaxPointerFileBytes = 4096;
     private const long MaxConfigBytes = 256 * 1024;
     private const int MaxGitDirEntries = 100_000;
+    private const int MaxWorktreeRegistrations = 100;
 
     /// <summary>
     /// Strict validation: true (and the per-worktree git directory) only when git may be run on <paramref name="worktree"/>.
@@ -47,6 +49,11 @@ internal static class GitRepoGuard
             }
 
             if (!string.Equals(located, commonDir, StringComparison.OrdinalIgnoreCase) && !CheckGitDirStrict(commonDir!, out reason))
+            {
+                return false;
+            }
+
+            if (!CheckWorktreeRegistrations(commonDir!, out reason))
             {
                 return false;
             }
@@ -282,6 +289,63 @@ internal static class GitRepoGuard
         {
             reason = "git data too large to validate";
             return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Linked-worktree back-pointers (<c>&lt;commonDir&gt;/worktrees/&lt;id&gt;/gitdir</c> and <c>commondir</c>): commands such
+    /// as <c>git worktree list</c> stat every registered worktree's path, and no config override prevents that. A path that
+    /// is not on a local drive (UNC, <c>//host</c>, device, drive-relative) would make git open an SMB connection, so any
+    /// entry that is missing, unreadable, too large or not provably local refuses the repository (fail closed).
+    /// </summary>
+    private static bool CheckWorktreeRegistrations(string commonDir, out string? reason)
+    {
+        reason = null;
+        var root = Path.Combine(commonDir, "worktrees");
+        if (File.Exists(root))
+        {
+            reason = "worktrees is a file";
+            return false;
+        }
+
+        if (!Directory.Exists(root))
+        {
+            return true;
+        }
+
+        var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false, RecurseSubdirectories = false };
+        var count = 0;
+        foreach (var entry in new DirectoryInfo(root).EnumerateDirectories("*", options))
+        {
+            if (++count > MaxWorktreeRegistrations)
+            {
+                reason = "too many linked worktrees to validate";
+                return false;
+            }
+
+            foreach (var (file, required) in new[] { ("gitdir", true), ("commondir", false) })
+            {
+                var path = Path.Combine(entry.FullName, file);
+                if (!File.Exists(path))
+                {
+                    if (required)
+                    {
+                        reason = $"linked worktree '{entry.Name}' has no {file} file";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                var value = ReadSmall(path)?.Split('\n')[0].Trim();
+                if (string.IsNullOrEmpty(value) || LooksRemote(value) || Resolve(entry.FullName, value) is not { } target || LooksRemote(target) || !IsLocalPath(target))
+                {
+                    reason = $"linked worktree '{entry.Name}' {file} points to a non-local location";
+                    return false;
+                }
+            }
         }
 
         return true;

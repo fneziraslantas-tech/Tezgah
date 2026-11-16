@@ -126,6 +126,7 @@ public sealed class GitHardeningTests : IDisposable
         var wt = _dir.Sub("wt");
         File.WriteAllText(Path.Combine(wt, ".git"), "gitdir: ../main/.git/worktrees/wt\n");
         File.WriteAllText(Path.Combine(real, "commondir"), "../..\n");
+        File.WriteAllText(Path.Combine(real, "gitdir"), Path.Combine(wt, ".git").Replace('\\', '/') + "\n");
         File.WriteAllText(Path.Combine(real, "HEAD"), "ref: refs/heads/wt\n");
         File.WriteAllText(Path.Combine(_dir.Path, "main", ".git", "HEAD"), "ref: refs/heads/main\n");
         Assert.True(GitRepoGuard.TryResolveLocalGitDir(wt, out var gitDir, out _));

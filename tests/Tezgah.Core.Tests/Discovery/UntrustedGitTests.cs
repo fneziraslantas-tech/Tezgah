@@ -311,6 +311,57 @@ public sealed class UntrustedGitTests : IDisposable
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), "the reader appears to have touched a network path");
     }
 
+    [Theory]
+    [InlineData("gitdir", "//10.255.255.7/share/wt/.git")]
+    [InlineData("gitdir", @"\\10.255.255.7\share\wt\.git")]
+    [InlineData("gitdir", @"\\?\UNC\10.255.255.7\share\wt\.git")]
+    [InlineData("gitdir", "D:wt/.git")]
+    [InlineData("commondir", "//10.255.255.7/share/x")]
+    [InlineData("gitdir", "")]
+    public async Task Crafted_linked_worktree_back_pointer_is_refused_without_starting_git(string file, string value)
+    {
+        // Reviewer PoC: "git worktree list" (run during uninstall planning) stats every worktrees/<id>/gitdir path, so a
+        // //host/share value makes git open an SMB connection without the repository ever being trusted. Plain git is
+        // deliberately not run against the address here.
+        var repo = _dir.Sub("wtptr" + Math.Abs((file + value).GetHashCode(StringComparison.Ordinal)));
+        if (!TestTools.GitInitWithCommit(repo))
+        {
+            return;
+        }
+
+        var entry = _dir.Sub(Path.GetFileName(repo), ".git", "worktrees", "x");
+        File.WriteAllText(Path.Combine(entry, "HEAD"), "ref: refs/heads/main\n");
+        File.WriteAllText(Path.Combine(entry, "commondir"), "../..\n");
+        File.WriteAllText(Path.Combine(entry, "gitdir"), Sh(Path.Combine(_dir.Path, "wt", ".git")) + "\n");
+        Assert.True(GitRepoGuard.TryResolveLocalGitDir(repo, out _, out _)); // a local back-pointer is fine
+
+        File.WriteAllText(Path.Combine(entry, file), value + "\n");
+        Assert.False(GitRepoGuard.TryResolveLocalGitDir(repo, out _, out var reason));
+        Assert.Contains("worktree", reason, StringComparison.Ordinal);
+
+        var sw = Stopwatch.StartNew();
+        await AssertRefusedWithoutGitAsync(repo);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), "the uninstall-planning git path appears to have touched the network path");
+    }
+
+    [Fact]
+    public async Task Linked_worktrees_come_from_the_managed_reader_on_the_cli_path()
+    {
+        var repo = _dir.Sub("wtcli");
+        if (!TestTools.GitInitWithCommit(repo))
+        {
+            return;
+        }
+
+        var wt = Path.Combine(_dir.Path, "wtcli-linked");
+        Assert.Equal(0, TestTools.Run("git", repo, "worktree", "add", "-q", wt, "-b", "side"));
+        var git = new GitClient(NullLogger<GitClient>.Instance);
+        var info = await git.GetInfoAsync(repo, fetch: false, CancellationToken.None);
+        Assert.False(info!.StatusUnknown);
+        Assert.Equal(Path.GetFullPath(wt), Path.GetFullPath(Assert.Single(info.LinkedWorktrees)), ignoreCase: true);
+        Assert.True(info.HasUnsavedWork);
+    }
+
     private static async Task AssertRefusedWithoutGitAsync(string repo)
     {
         // Uninstall planning path: the guard refuses, so no git process runs and the state is unknown (fail closed).

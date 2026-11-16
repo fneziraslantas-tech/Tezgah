@@ -167,11 +167,12 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         }
 
         var parsed = GitStatusParser.Parse(status.StdOut);
+        var metadata = new Lazy<GitInfo?>(() => GitMetadataReader.Read(repoPath));
         var stashes = parsed.Stashes;
         if (stashes is null)
         {
             // "git stash list" is a reflog walk that may verify signatures: count the stash reflog ourselves.
-            stashes = GitMetadataReader.Read(repoPath)?.Stashes ?? 0;
+            stashes = metadata.Value?.Stashes ?? 0;
         }
 
         DateTimeOffset? lastCommitAt = null;
@@ -210,12 +211,10 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
             }
         }
 
-        IReadOnlyList<string> worktrees = [];
-        var wt = await RunGitAsync(LocalTimeout, ct, "worktree", "list", "--porcelain").ConfigureAwait(false);
-        if (wt.Success)
-        {
-            worktrees = ParseLinkedWorktrees(wt.StdOut, repoPath);
-        }
+        // Linked worktrees come from the managed reader (paths reported as text): "git worktree list" stats every registered
+        // worktree path, which for a crafted back-pointer means opening a network share, and a timeout there would silently
+        // drop the "linked worktrees break" warning.
+        var worktrees = metadata.Value?.LinkedWorktrees ?? [];
 
         return new GitInfo
         {
@@ -334,23 +333,6 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         }
 
         return result;
-    }
-
-    /// <summary>Paths of linked worktrees from <c>git worktree list --porcelain</c> when <paramref name="repoPath"/> is the main worktree.</summary>
-    internal static IReadOnlyList<string> ParseLinkedWorktrees(string output, string repoPath)
-    {
-        var paths = output.Split('\n')
-            .Select(l => l.TrimEnd('\r'))
-            .Where(l => l.StartsWith("worktree ", StringComparison.Ordinal))
-            .Select(l => l["worktree ".Length..].Replace('/', '\\'))
-            .ToList();
-        if (paths.Count < 2)
-        {
-            return [];
-        }
-
-        var self = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
-        return string.Equals(Path.TrimEndingDirectorySeparator(paths[0]), self, StringComparison.OrdinalIgnoreCase) ? paths.Skip(1).ToList() : [];
     }
 
     internal static bool IsDubiousOwnership(string stderr) =>
