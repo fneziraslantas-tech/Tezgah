@@ -26,13 +26,53 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
 
         return toRecycleBin
             ? RunOnStaThreadAsync(() => RecycleAndVerify(full, policy), ct)
-            : Task.Run(
-                () =>
+            : Task.Run(() => DeletePermanentlyWithPreflight(full, policy, ct), ct);
+    }
+
+    /// <summary>
+    /// Permanent delete in two phases. First the folder is renamed to a hidden sibling ("tombstone") on the same volume:
+    /// NTFS refuses that rename while anything inside is open or used as a current directory, so a folder that is in use
+    /// fails here with nothing deleted (instead of half a tree, history first). Then the tombstone is deleted, history last.
+    /// </summary>
+    private void DeletePermanentlyWithPreflight(string full, DeletePolicy policy, CancellationToken ct)
+    {
+        Validate(full, policy);
+        var parent = Path.GetDirectoryName(full)!;
+        var tombstone = Path.Combine(parent, $".{Path.GetFileName(full)}.tezgah-delete-{Guid.NewGuid().ToString("N")[..8]}");
+        try
+        {
+            Retry(() => Directory.Move(full, tombstone));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException(L.T(
+                $"Klasördeki dosyalar kullanımda; hiçbir şey silinmedi. Klasörü kullanan programları kapatıp tekrar deneyin: {full}",
+                $"Files in the folder are in use; nothing was deleted. Close the programs using it and try again: {full}"), ex);
+        }
+
+        try
+        {
+            Validate(tombstone, policy);
+            DeleteTreePermanently(tombstone, isRoot: true, ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            try
+            {
+                if (Directory.Exists(tombstone) && !Path.Exists(full))
                 {
-                    Validate(full, policy);
-                    DeleteTreePermanently(full, isRoot: true, ct);
-                },
-                ct);
+                    Directory.Move(tombstone, full); // put what is left back where the user expects it
+                }
+            }
+            catch (Exception restore) when (restore is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(L.T(
+                    $"Silme yarıda kaldı; kalan dosyalar şurada: {tombstone}",
+                    $"Deletion stopped part-way; the remaining files are in: {tombstone}"), ex);
+            }
+
+            throw;
+        }
     }
 
     public Task RemoveFileAsync(string path, bool toRecycleBin, DeletePolicy policy, CancellationToken ct)
@@ -85,12 +125,20 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
     {
         ct.ThrowIfCancellationRequested();
         var info = new DirectoryInfo(directory);
-        if (!isRoot && (info.Attributes & FileAttributes.ReparsePoint) != 0)
+        info.Refresh(); // fresh attributes, never the ones cached by the parent's enumeration
+        if (IsLinkLike(info))
         {
+            if (isRoot)
+            {
+                // The guard refused links moments ago: a link here means the folder was swapped. Touch nothing.
+                throw new IOException(L.T($"Klasör silinmeden hemen önce bir bağlantıyla değiştirildi; dokunulmadı: {directory}", $"The folder was replaced by a link right before deletion; left untouched: {directory}"));
+            }
+
             RemoveLink(info);
             return;
         }
 
+        FileSystemInfo? history = null;
         foreach (var entry in info.EnumerateFileSystemInfos("*", new EnumerationOptions
         {
             RecurseSubdirectories = false,
@@ -100,23 +148,20 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
         }))
         {
             ct.ThrowIfCancellationRequested();
-            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+            if (isRoot && entry.Name.Equals(".git", StringComparison.OrdinalIgnoreCase))
             {
-                RemoveLink(entry);
+                history = entry; // deleted last: if anything else fails, the repository history survives
+                continue;
             }
-            else if (entry is DirectoryInfo dir)
-            {
-                DeleteTreePermanently(dir.FullName, isRoot: false, ct);
-            }
-            else
-            {
-                Retry(() =>
-                {
-                    entry.Attributes = FileAttributes.Normal;
-                    entry.Delete();
-                });
-            }
+
+            DeleteEntry(entry, ct);
         }
+
+        if (history is not null)
+        {
+            DeleteEntry(history, ct);
+        }
+
 
         Retry(() =>
         {
@@ -124,6 +169,36 @@ internal sealed class FileRemover(PathGuard guard) : IFileRemover
             info.Delete(recursive: false);
         });
     }
+
+    private static void DeleteEntry(FileSystemInfo entry, CancellationToken ct)
+    {
+        if (IsLinkLike(entry))
+        {
+            RemoveLink(entry);
+        }
+        else if (entry is DirectoryInfo dir)
+        {
+            DeleteTreePermanently(dir.FullName, isRoot: false, ct);
+        }
+        else
+        {
+            Retry(() =>
+            {
+                entry.Attributes = FileAttributes.Normal;
+                entry.Delete();
+            });
+        }
+    }
+
+    /// <summary>
+    /// True for reparse points that redirect the namespace (symlinks, junctions, mount points, unknown tags). Benign tags
+    /// (OneDrive/cloud placeholders, dedup, WOF) are ordinary files and folders: a OneDrive project folder must be recursed
+    /// into, not "unlinked" (which failed with "directory not empty" half-way). Fails closed when the tag cannot be read.
+    /// </summary>
+    internal static bool IsLinkLike(FileSystemInfo entry) =>
+        (entry.Attributes & FileAttributes.ReparsePoint) != 0 && IsLinkLikeTag(Win32.GetReparseTag(entry.FullName));
+
+    internal static bool IsLinkLikeTag(uint? tag) => tag is not { } t || !PathGuard.IsBenignReparseTag(t);
 
     /// <summary>Deletes a symlink/junction entry. RemoveDirectoryW/DeleteFileW act on the link, never on its target.</summary>
     private static void RemoveLink(FileSystemInfo link)

@@ -301,7 +301,7 @@ internal sealed partial class PathGuard : IPathGuard
     /// Reparse points that do not redirect the namespace: OneDrive/cloud placeholders, dedup and WOF-compressed files.
     /// Everything else (symlinks, junctions, mount points, WSL links, unknown tags) is treated as a link.
     /// </summary>
-    private static bool IsBenignReparseTag(uint tag)
+    internal static bool IsBenignReparseTag(uint tag)
     {
         const uint nameSurrogate = 0x20000000;
         if ((tag & nameSurrogate) != 0)
