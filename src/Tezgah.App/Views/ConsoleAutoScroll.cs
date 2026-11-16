@@ -56,7 +56,9 @@ public static class ConsoleAutoScroll
     {
         if (sender is ListBox list && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control && list.SelectedItems.Count > 0)
         {
-            var lines = list.SelectedItems.Cast<Tezgah.Core.Model.OutputLine>().OrderBy(l => list.Items.IndexOf(l)).Select(l => l.Text);
+            // One linear pass in display order with reference identity (records compare by value, IndexOf per line was O(n²)).
+            var selected = new HashSet<object>(list.SelectedItems.Cast<object>(), ReferenceEqualityComparer.Instance);
+            var lines = list.Items.Cast<Tezgah.Core.Model.OutputLine>().Where(selected.Contains).Select(l => l.Text);
             try
             {
                 Clipboard.SetText(string.Join(Environment.NewLine, lines));

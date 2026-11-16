@@ -118,6 +118,8 @@
     <sys:String x:Key="Run_ExitedWithCode">Finished · exit code {0}</sys:String>
     <sys:String x:Key="Run_Failed">Could not start "{0}": {1}</sys:String>
     <sys:String x:Key="Run_StopFailed">Could not stop: {0}</sys:String>
+    <sys:String x:Key="Run_LinesSkipped">… {0} lines skipped (output too fast)</sys:String>
+    <sys:String x:Key="Run_InputFailed">Input could not be sent: {0}</sys:String>
     <sys:String x:Key="ProfileKind_Run">Run</sys:String>
     <sys:String x:Key="ProfileKind_Setup">Setup</sys:String>
     <sys:String x:Key="ProfileKind_Build">Build</sys:String>

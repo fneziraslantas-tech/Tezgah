@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -17,7 +18,13 @@ public sealed partial class RunSessionViewModel : ObservableObject, IDisposable
 {
     public const int DefaultMaxLines = 5000;
 
+    /// <summary>Maximum URL chips per run (dev servers that log every absolute request URL).</summary>
+    public const int MaxUrls = 10;
+
     private readonly ConcurrentQueue<OutputLine> _pending = new();
+    private readonly HashSet<string> _urlOrigins = new(StringComparer.OrdinalIgnoreCase);
+    private int _pendingCount;
+    private long _dropped;
     private readonly ConcurrentQueue<Uri> _pendingUrls = new();
     private readonly IRunService _runs;
     private readonly IClipboardService _clipboard;
@@ -58,7 +65,7 @@ public sealed partial class RunSessionViewModel : ObservableObject, IDisposable
 
         foreach (var u in process.DetectedUrls)
         {
-            Urls.Add(u);
+            AddUrl(u);
         }
 
         UpdateStatus();
@@ -74,41 +81,71 @@ public sealed partial class RunSessionViewModel : ObservableObject, IDisposable
 
     public int MaxLines { get; set; } = DefaultMaxLines;
 
-    public ObservableCollection<OutputLine> Lines { get; } = [];
+    public BulkObservableCollection<OutputLine> Lines { get; } = [];
 
     public ObservableCollection<Uri> Urls { get; } = [];
 
     /// <summary>Raised after a batch was appended (the view scrolls to the end when <see cref="AutoScroll"/> is on).</summary>
     public event EventHandler? LinesAppended;
 
-    /// <summary>UI thread: moves queued output into <see cref="Lines"/>, trims to <see cref="MaxLines"/>, updates state.</summary>
+    /// <summary>
+    /// UI thread: moves queued output into <see cref="Lines"/> keeping at most <see cref="MaxLines"/>. The work per tick is
+    /// bounded: at most <see cref="MaxLines"/> lines are taken, older ones are dropped with a "lines skipped" marker, and
+    /// large batches replace the collection with a single Reset instead of one notification per added/removed line.
+    /// </summary>
     public void Flush()
     {
-        var added = 0;
-        while (_pending.TryDequeue(out var line))
+        // Lines older than the newest MaxLines can never be shown: drop them without touching the UI.
+        while (Volatile.Read(ref _pendingCount) > MaxLines && _pending.TryDequeue(out _))
         {
+            Interlocked.Decrement(ref _pendingCount);
+            Interlocked.Increment(ref _dropped);
+        }
+
+        var batch = new List<OutputLine>();
+        while (batch.Count < MaxLines && _pending.TryDequeue(out var line))
+        {
+            Interlocked.Decrement(ref _pendingCount);
             if (_snapshot is not null && _snapshot.Remove(line))
             {
                 continue;
             }
 
-            Lines.Add(line);
-            added++;
+            batch.Add(line);
         }
 
         _snapshot = null;
-        var excess = Lines.Count - MaxLines;
-        for (var i = 0; i < excess; i++)
+        var skipped = Interlocked.Exchange(ref _dropped, 0);
+        if (skipped > 0)
         {
-            Lines.RemoveAt(0);
+            if (batch.Count >= MaxLines)
+            {
+                batch.RemoveAt(0);
+            }
+
+            batch.Insert(0, new OutputLine(DateTimeOffset.Now, _s.Format("Run_LinesSkipped", skipped), IsError: true));
+        }
+
+        var added = batch.Count;
+        if (added > 0)
+        {
+            var excess = Lines.Count + batch.Count - MaxLines;
+            if (excess > 0 || batch.Count > 64)
+            {
+                Lines.ReplaceAll(Lines.Skip(Math.Max(0, excess)).Concat(batch));
+            }
+            else
+            {
+                foreach (var line in batch)
+                {
+                    Lines.Add(line);
+                }
+            }
         }
 
         while (_pendingUrls.TryDequeue(out var u))
         {
-            if (!Urls.Contains(u))
-            {
-                Urls.Add(u);
-            }
+            AddUrl(u);
         }
 
         if (IsRunning && Process.HasExited)
@@ -129,17 +166,50 @@ public sealed partial class RunSessionViewModel : ObservableObject, IDisposable
             : _s.Format("Run_ExitedWithCode", Process.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?");
 
     [RelayCommand]
-    private Task StopAsync() => IsRunning ? _runs.StopAsync(RunId, CancellationToken.None) : Task.CompletedTask;
+    private async Task StopAsync()
+    {
+        if (!IsRunning)
+        {
+            return;
+        }
+
+        try
+        {
+            await _runs.StopAsync(RunId, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ObjectDisposedException or System.ComponentModel.Win32Exception)
+        {
+            StatusText = _s.Format("Run_StopFailed", ex.Message);
+        }
+    }
 
     [RelayCommand(CanExecute = nameof(CanSendInput))]
     private async Task SendInputAsync()
     {
         var text = InputText;
         InputText = string.Empty;
-        await Process.SendInputAsync(text, CancellationToken.None);
+        try
+        {
+            await Process.SendInputAsync(text, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ObjectDisposedException)
+        {
+            // The process exited between the click and the write: keep what the user typed and say why.
+            if (InputText.Length == 0)
+            {
+                InputText = text;
+            }
+
+            if (Process.HasExited)
+            {
+                IsRunning = false;
+            }
+
+            StatusText = _s.Format("Run_InputFailed", ex.Message);
+        }
     }
 
-    private bool CanSendInput() => IsRunning && InputText.Length > 0;
+    private bool CanSendInput() => IsRunning && !Process.HasExited && InputText.Length > 0;
 
     partial void OnIsRunningChanged(bool value) => SendInputCommand.NotifyCanExecuteChanged();
 
@@ -158,7 +228,25 @@ public sealed partial class RunSessionViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void Clear() => Lines.Clear();
 
-    private void OnOutput(object? sender, OutputLine e) => _pending.Enqueue(e);
+    private void OnOutput(object? sender, OutputLine e)
+    {
+        _pending.Enqueue(e);
+
+        // Bound memory while the UI lags behind a chatty process: keep the newest lines, count the rest.
+        if (Interlocked.Increment(ref _pendingCount) > MaxLines * 2 && _pending.TryDequeue(out _))
+        {
+            Interlocked.Decrement(ref _pendingCount);
+            Interlocked.Increment(ref _dropped);
+        }
+    }
+
+    private void AddUrl(Uri u)
+    {
+        if (Urls.Count < MaxUrls && _urlOrigins.Add(u.GetLeftPart(UriPartial.Authority)))
+        {
+            Urls.Add(u);
+        }
+    }
 
     private void OnUrl(object? sender, Uri e) => _pendingUrls.Enqueue(e);
 

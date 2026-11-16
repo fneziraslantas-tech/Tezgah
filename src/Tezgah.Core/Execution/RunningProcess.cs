@@ -14,6 +14,12 @@ internal sealed class RunningProcess : IRunningProcess
 {
     public const int DefaultBufferLines = 5000;
 
+    /// <summary>Longest line kept (a newline-less stream would otherwise feed megabytes to the ANSI/URL regexes and the UI).</summary>
+    public const int MaxLineLength = 16 * 1024;
+
+    /// <summary>Distinct dev-server origins remembered per run.</summary>
+    public const int MaxUrls = 10;
+
     private readonly Process _process;
     private readonly JobObject _job;
     private readonly RingBuffer<OutputLine> _output;
@@ -21,8 +27,11 @@ internal sealed class RunningProcess : IRunningProcess
     private readonly List<Uri> _urls = [];
     private readonly HashSet<string> _urlKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly TaskCompletionSource _exitedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _stdoutEof = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _stderrEof = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int? _exitCode;
     private int _disposed;
+    private int _finishing;
 
     private RunningProcess(string itemId, RunProfile profile, Process process, JobObject job, int bufferLines)
     {
@@ -67,7 +76,7 @@ internal sealed class RunningProcess : IRunningProcess
         }
     }
 
-    /// <summary>Task completing when the root process exits.</summary>
+    /// <summary>Task completing when the root process exited and its output was drained (bounded wait).</summary>
     internal Task Completion => _exitedTcs.Task;
 
     /// <summary>Starts the process and binds it to a new Job Object.</summary>
@@ -183,7 +192,9 @@ internal sealed class RunningProcess : IRunningProcess
         }
 
         _job.Terminate();
-        await Task.WhenAny(Completion, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+
+        // Never dispose the Process (which closes the pipes) before the readers delivered the last lines.
+        await Task.WhenAny(Task.WhenAll(Completion, _stdoutEof.Task, _stderrEof.Task), Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
         _job.Dispose();
         _process.Dispose();
     }
@@ -192,7 +203,13 @@ internal sealed class RunningProcess : IRunningProcess
     {
         if (data is null)
         {
+            (isError ? _stderrEof : _stdoutEof).TrySetResult();
             return;
+        }
+
+        if (data.Length > MaxLineLength)
+        {
+            data = data[..MaxLineLength] + "…";
         }
 
         var text = OutputText.StripAnsi(data);
@@ -205,7 +222,8 @@ internal sealed class RunningProcess : IRunningProcess
             bool added;
             lock (_urlGate)
             {
-                added = _urlKeys.Add(uri.AbsoluteUri);
+                // One chip per origin: a server logging every request URL must not grow the list without bound.
+                added = _urls.Count < MaxUrls && _urlKeys.Add(uri.GetLeftPart(UriPartial.Authority));
                 if (added)
                 {
                     _urls.Add(uri);
@@ -227,6 +245,26 @@ internal sealed class RunningProcess : IRunningProcess
         }
         catch (InvalidOperationException)
         {
+        }
+
+        if (Interlocked.Exchange(ref _finishing, 1) == 0)
+        {
+            _ = FinishAsync();
+        }
+    }
+
+    /// <summary>
+    /// Process.Exited does not wait for the redirected streams: the last lines (often the traceback that explains a
+    /// non-zero exit) may still be in flight. Wait for both EOFs (bounded); if a grandchild keeps the pipes open, kill the
+    /// job so they close, wait briefly once more, then report the exit.
+    /// </summary>
+    private async Task FinishAsync()
+    {
+        var drained = Task.WhenAll(_stdoutEof.Task, _stderrEof.Task);
+        if (await Task.WhenAny(drained, Task.Delay(TimeSpan.FromMilliseconds(750))).ConfigureAwait(false) != drained)
+        {
+            _job.Terminate();
+            await Task.WhenAny(drained, Task.Delay(TimeSpan.FromMilliseconds(500))).ConfigureAwait(false);
         }
 
         if (_exitedTcs.TrySetResult())
