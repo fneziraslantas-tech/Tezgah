@@ -28,9 +28,10 @@ public sealed partial class CleanupViewModel : ObservableObject
     [ObservableProperty]
     private long _freedBytes;
 
-    public CleanupViewModel(CatalogItem item, ICleanupService service, IStrings strings)
+    public CleanupViewModel(CatalogItem item, ICleanupService service, IStrings strings, bool permanentDelete = false)
     {
         ArgumentNullException.ThrowIfNull(item);
+        PermanentDelete = permanentDelete;
         ItemId = item.Id;
         ItemName = item.Name;
         _service = service;
@@ -50,6 +51,9 @@ public sealed partial class CleanupViewModel : ObservableObject
     public string ItemId { get; }
 
     public string ItemName { get; }
+
+    /// <summary>True when the Recycle Bin is turned off in settings: the selected folders are deleted for good.</summary>
+    public bool PermanentDelete { get; }
 
     public string Title => _s.Format("Cleanup_Title", ItemName);
 

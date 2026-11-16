@@ -72,6 +72,20 @@ public class DialogViewModelTests
         Assert.NotNull(totalBefore);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Cleanup_warns_when_folders_are_deleted_permanently(bool permanent)
+    {
+        var h = new Harness();
+        await h.Catalog.InitializeAsync(CancellationToken.None);
+        var item = h.Catalog.State.Items.Single(i => i.Name == "vite-react-dashboard");
+
+        var vm = new CleanupViewModel(item, new Tezgah.App.Demo.DemoCleanupService(h.Catalog), new KeyStrings(), permanentDelete: permanent);
+
+        Assert.Equal(permanent, vm.PermanentDelete);
+    }
+
     [Fact]
     public async Task Cleanup_frees_selected_artifacts_only()
     {
