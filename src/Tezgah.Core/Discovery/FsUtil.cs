@@ -13,6 +13,22 @@ internal static class FsUtil
 
     public const long DefaultMaxReadBytes = 256 * 1024;
 
+    /// <summary>Test seam: attribute reader used by <see cref="IsCloudPlaceholder"/>.</summary>
+    internal static Func<string, FileAttributes> GetAttributes { get; set; } = File.GetAttributes;
+
+    /// <summary>True when <paramref name="path"/> exists and is an online-only cloud placeholder (reading it would download it).</summary>
+    public static bool IsCloudPlaceholder(string path, Func<string, FileAttributes>? getAttributes = null)
+    {
+        try
+        {
+            return ((getAttributes ?? File.GetAttributes)(path) & CloudPlaceholder) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Reads a small text file. Returns null when missing, too big, inaccessible, or an online-only cloud placeholder
     /// (reading those would trigger a download).

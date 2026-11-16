@@ -140,8 +140,10 @@ internal sealed class ProjectInspector
     /// <summary>
     /// Builds a catalog item for <paramref name="directory"/>. Returns null when it is neither a git repository nor a
     /// recognised project, unless <paramref name="force"/> (user picked the folder explicitly).
+    /// <paramref name="skipCloudGit"/> (background scans) skips git for repositories whose git data is an online-only
+    /// cloud placeholder: <c>git status</c> would make OneDrive download the whole object store and working tree.
     /// </summary>
-    public async Task<CatalogItem?> InspectAsync(string directory, bool fetchGit, bool force, bool computeSize, CancellationToken ct)
+    public async Task<CatalogItem?> InspectAsync(string directory, bool fetchGit, bool force, bool computeSize, CancellationToken ct, bool skipCloudGit = false)
     {
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         if (!Directory.Exists(full))
@@ -157,7 +159,11 @@ internal sealed class ProjectInspector
         }
 
         GitInfo? git = null;
-        if (isGit)
+        if (isGit && skipCloudGit && IsCloudBackedRepo(full))
+        {
+            _logger.LogInformation("Online-only (cloud) repository {Path}: git details skipped during scan", full);
+        }
+        else if (isGit)
         {
             try
             {
@@ -201,6 +207,39 @@ internal sealed class ProjectInspector
             Artifacts = detection.Artifacts,
             WebUrl = GitUrls.ToWebUrl(git?.RemoteUrl),
         };
+    }
+
+    /// <summary>
+    /// True when the repository's git data is an online-only cloud placeholder (OneDrive "Files On-Demand"): reading it
+    /// would trigger a download. Only attributes are read, never file contents.
+    /// </summary>
+    internal static bool IsCloudBackedRepo(string directory, Func<string, FileAttributes>? getAttributes = null)
+    {
+        var dotGit = Path.Combine(directory, ".git");
+        if (FsUtil.IsCloudPlaceholder(dotGit, getAttributes))
+        {
+            return true;
+        }
+
+        if (!Directory.Exists(dotGit))
+        {
+            return false;
+        }
+
+        if (FsUtil.IsCloudPlaceholder(Path.Combine(dotGit, "index"), getAttributes) || FsUtil.IsCloudPlaceholder(Path.Combine(dotGit, "HEAD"), getAttributes))
+        {
+            return true;
+        }
+
+        try
+        {
+            var pack = Path.Combine(dotGit, "objects", "pack");
+            return Directory.Exists(pack) && Directory.EnumerateFiles(pack, "*.pack").Take(4).Any(p => FsUtil.IsCloudPlaceholder(p, getAttributes));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>A <c>.git</c> directory, or a <c>.git</c> file (worktrees and submodules).</summary>

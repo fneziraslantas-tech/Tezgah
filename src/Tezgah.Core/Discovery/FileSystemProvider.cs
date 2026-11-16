@@ -49,7 +49,7 @@ internal sealed class FileSystemProvider(ProjectInspector inspector, ILogger<Fil
         {
             try
             {
-                var item = await inspector.InspectAsync(path, fetchGit: false, force: false, computeSize: true, token).ConfigureAwait(false);
+                var item = await inspector.InspectAsync(path, fetchGit: false, force: false, computeSize: true, token, skipCloudGit: true).ConfigureAwait(false);
                 if (item is not null)
                 {
                     items.Add(item);
