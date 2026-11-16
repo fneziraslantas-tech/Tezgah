@@ -47,6 +47,12 @@ public interface IGitClient
     /// such files (.env, local databases, keys) exist nowhere else. Empty when unknown.
     /// </summary>
     Task<IReadOnlyList<string>> GetIgnoredPathsAsync(string repoPath, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>([]);
+
+    /// <summary>
+    /// True when <paramref name="relativeDirectory"/> holds files git tracks, or untracked files that are not ignored
+    /// (i.e. not regenerable build output). Null when it cannot be determined.
+    /// </summary>
+    Task<bool?> HoldsUnregenerableFilesAsync(string repoPath, string relativeDirectory, CancellationToken ct) => Task.FromResult<bool?>(null);
 }
 
 // ───────────────────────────── Execution layer ─────────────────────────────

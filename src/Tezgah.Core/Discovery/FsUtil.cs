@@ -159,7 +159,7 @@ internal static class FsUtil
             var p = Path.Combine(directory, name);
             if (IsRealDirectory(p))
             {
-                list.Add(new ArtifactDir(p, kind, DirectorySize(p)));
+                list.Add(new ArtifactDir(p, kind, DirectorySize(p), ArtifactDir.AmbiguousNames.Contains(name)));
             }
         }
 

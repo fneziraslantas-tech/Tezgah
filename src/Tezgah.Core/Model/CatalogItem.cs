@@ -116,8 +116,15 @@ public sealed record GitInfo
         UnpushedCommits is null or > 0 || LinkedWorktrees.Count > 0;
 }
 
-/// <summary>A regenerable directory inside a project.</summary>
-public sealed record ArtifactDir(string Path, string Kind, long SizeBytes);
+/// <summary>
+/// A regenerable directory inside a project. <paramref name="Ambiguous"/> marks names that are often hand-made or
+/// committed (build, dist, out): never pre-selected, and refused for cleanup when git tracks or does not ignore files in them.
+/// </summary>
+public sealed record ArtifactDir(string Path, string Kind, long SizeBytes, bool Ambiguous = false)
+{
+    /// <summary>Folder names that are build output for some tools but source/resources for others.</summary>
+    public static readonly IReadOnlySet<string> AmbiguousNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "build", "dist", "out" };
+}
 
 /// <summary>Builds stable ids. Paths are normalised (full path, lower-case, no trailing separator).</summary>
 public static class ItemIds

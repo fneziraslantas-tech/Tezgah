@@ -166,7 +166,7 @@
 
     <!-- cleanup -->
     <sys:String x:Key="Cleanup_Title">{0}: free space</sys:String>
-    <sys:String x:Key="Cleanup_Explain">These folders are created by install/build steps and can be regenerated when needed (e.g. npm install, pip install). Your code is not deleted.</sys:String>
+    <sys:String x:Key="Cleanup_Explain">These folders are usually created by install/build steps and can be regenerated (e.g. npm install, pip install). "build", "dist" and "out" sometimes hold hand-made files: they are not selected by default, and in a git repository they are only cleaned when git ignores everything in them.</sys:String>
     <sys:String x:Key="Cleanup_Total">Selected: {0}</sys:String>
     <sys:String x:Key="Cleanup_Confirm">Clean</sys:String>
     <sys:String x:Key="Cleanup_Done">{0} freed.</sys:String>

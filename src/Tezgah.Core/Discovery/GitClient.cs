@@ -224,6 +224,37 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         return r.Success ? r.StdOut.Split('\0', StringSplitOptions.RemoveEmptyEntries).Take(5_000).ToList() : [];
     }
 
+    public async Task<bool?> HoldsUnregenerableFilesAsync(string repoPath, string relativeDirectory, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoPath);
+        ArgumentException.ThrowIfNullOrEmpty(relativeDirectory);
+        if (!await IsAvailableAsync(ct).ConfigureAwait(false) || !GitRepoGuard.TryResolveLocalGitDir(repoPath, out _, out _))
+        {
+            return null;
+        }
+
+        var filters = await ReadFilterDriversAsync(repoPath, ct).ConfigureAwait(false);
+        if (filters is null)
+        {
+            return null;
+        }
+
+        var dir = relativeDirectory.Replace('\\', '/').TrimEnd('/') + "/";
+        var tracked = await RunHardenedAsync(repoPath, LocalTimeout, filters, ct, "ls-files", "-z", "--", dir).ConfigureAwait(false);
+        if (!tracked.Success)
+        {
+            return null;
+        }
+
+        if (tracked.StdOut.Length > 0)
+        {
+            return true;
+        }
+
+        var status = await RunHardenedAsync(repoPath, LocalTimeout, filters, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", dir).ConfigureAwait(false);
+        return status.Success ? status.StdOut.Length > 0 : null;
+    }
+
     internal static (DateTimeOffset? At, string? Subject) ParseLog(string output)
     {
         var line = output.TrimEnd('\r', '\n');

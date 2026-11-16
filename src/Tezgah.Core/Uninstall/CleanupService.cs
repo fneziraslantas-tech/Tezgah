@@ -9,7 +9,7 @@ namespace Tezgah.Core.Uninstall;
 /// detected for the item, lie strictly inside the item folder after full normalisation, pass the path guard (which refuses
 /// links anywhere in the chain) and must not be or be inside a <c>.git</c> folder. All are validated before any is deleted.
 /// </summary>
-internal sealed class CleanupService(ICatalogService catalog, PathGuard guard, FileRemover remover, UninstallOptions options) : ICleanupService
+internal sealed class CleanupService(ICatalogService catalog, PathGuard guard, FileRemover remover, UninstallOptions options, IGitClient? git = null) : ICleanupService
 {
     private readonly AuditLog _audit = new(options.AuditLogPath);
 
@@ -33,6 +33,22 @@ internal sealed class CleanupService(ICatalogService catalog, PathGuard guard, F
         foreach (var artifact in artifacts)
         {
             targets.Add(Validate(artifact, root, known));
+        }
+
+        // build/dist/out are often hand-made or committed (electron-builder icons, a GitHub action's dist...). In a git
+        // repository they are only cleaned when git says everything in them is ignored. Checked before anything is deleted.
+        if (Discovery.ProjectInspector.IsGitRoot(root))
+        {
+            foreach (var target in targets.Where(t => ArtifactDir.AmbiguousNames.Contains(Path.GetFileName(t))))
+            {
+                var holds = git is null ? null : await git.HoldsUnregenerableFilesAsync(root, Path.GetRelativePath(root, target), ct).ConfigureAwait(false);
+                if (holds != false)
+                {
+                    throw new UnauthorizedAccessException(L.T(
+                        $"Bu klasörde git'in izlediği ya da yok saymadığı dosyalar var (ya da doğrulanamadı); temizlenmedi: {target}",
+                        $"This folder holds files git tracks or does not ignore (or this could not be verified); not cleaned: {target}"));
+                }
+            }
         }
 
         var recycle = catalog.State.Settings.UseRecycleBin;

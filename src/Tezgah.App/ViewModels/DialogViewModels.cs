@@ -94,10 +94,13 @@ public sealed partial class CleanupViewModel : ObservableObject
 
 public sealed partial class ArtifactViewModel(ArtifactDir artifact, string? root) : ObservableObject
 {
+    // build/dist/out may hold hand-made files: never pre-selected.
     [ObservableProperty]
-    private bool _isSelected = true;
+    private bool _isSelected = !(artifact ?? throw new ArgumentNullException(nameof(artifact))).Ambiguous;
 
     public ArtifactDir Artifact { get; } = artifact;
+
+    public bool IsAmbiguous => Artifact.Ambiguous;
 
     public string Kind => Artifact.Kind;
 

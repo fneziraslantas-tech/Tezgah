@@ -37,6 +37,13 @@ public class UiRegressionTests
     }
 
     [Fact]
+    public void Ambiguous_artifacts_are_not_preselected_for_cleanup()
+    {
+        Assert.False(new ArtifactViewModel(new ArtifactDir(@"C:\p\build", "node", 1, Ambiguous: true), @"C:\p").IsSelected);
+        Assert.True(new ArtifactViewModel(new ArtifactDir(@"C:\p\node_modules", "node", 1), @"C:\p").IsSelected);
+    }
+
+    [Fact]
     public void Search_haystack_is_refreshed_on_update()
     {
         var vm = Item("Tool", note: "alpha");
