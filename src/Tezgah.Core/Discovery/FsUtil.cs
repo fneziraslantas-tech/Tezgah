@@ -105,6 +105,17 @@ internal static class FsUtil
     /// </summary>
     public static long DirectorySize(string path, int maxEntries = 400_000, TimeSpan? budget = null, CancellationToken ct = default)
     {
+        if (!ct.CanBeCanceled)
+        {
+            ct = DetectionScope.Token; // inside a detection scope: honour the scan's cancellation
+        }
+
+        if (DetectionScope.Remaining is { } remaining && (budget is null || remaining < budget))
+        {
+            budget = remaining; // one shared budget per inspected folder
+        }
+
+        ct.ThrowIfCancellationRequested();
         var limit = budget ?? TimeSpan.FromSeconds(8);
         var sw = Stopwatch.StartNew();
         long total = 0;
@@ -130,7 +141,7 @@ internal static class FsUtil
                     break;
                 }
 
-                if ((count & 0xFFF) == 0)
+                if ((count & 0xFF) == 0)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (sw.Elapsed > limit)

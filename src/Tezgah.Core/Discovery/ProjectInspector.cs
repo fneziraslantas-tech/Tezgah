@@ -49,12 +49,17 @@ internal sealed class ProjectInspector
     public static bool HasProjectMarker(string fileName) =>
         MarkerFiles.Contains(fileName) || MarkerExtensions.Any(e => fileName.EndsWith(e, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Runs the detectors (never executes project code).</summary>
-    public FolderDetection Detect(string directory, bool includeReadmeCommands)
+    /// <summary>Total time detectors may spend measuring artifact folders of one project.</summary>
+    internal static readonly TimeSpan DetectionBudget = TimeSpan.FromSeconds(10);
+
+    /// <summary>Runs the detectors (never executes project code). Cancellation is checked between and inside detectors.</summary>
+    public FolderDetection Detect(string directory, bool includeReadmeCommands, CancellationToken ct = default)
     {
+        using var scope = DetectionScope.Enter(DetectionBudget, ct);
         var detections = new List<ProjectDetection>();
         foreach (var detector in _detectors)
         {
+            ct.ThrowIfCancellationRequested();
             try
             {
                 var d = detector.Detect(directory);
@@ -152,7 +157,7 @@ internal sealed class ProjectInspector
         }
 
         var isGit = IsGitRoot(full);
-        var detection = Detect(full, includeReadmeCommands: isGit || force);
+        var detection = Detect(full, includeReadmeCommands: isGit || force, ct);
         if (!isGit && !detection.IsProject && !force)
         {
             return null;
