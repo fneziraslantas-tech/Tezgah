@@ -31,6 +31,8 @@ public sealed class DialogService(IStrings strings) : IDialogService
 
     public void ShowClone(CloneViewModel viewModel) => Show(new CloneDialog(viewModel));
 
+    public void ShowAbout(AboutViewModel viewModel) => Show(new AboutDialog(viewModel));
+
     public string? PickFolder(string title, string? initialDirectory)
     {
         var dlg = new OpenFolderDialog { Title = title, Multiselect = false };

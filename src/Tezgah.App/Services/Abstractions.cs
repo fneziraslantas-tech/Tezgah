@@ -49,6 +49,8 @@ public interface IDialogService
 
     void ShowClone(CloneViewModel viewModel);
 
+    void ShowAbout(AboutViewModel viewModel);
+
     string? PickFolder(string title, string? initialDirectory);
 }
 

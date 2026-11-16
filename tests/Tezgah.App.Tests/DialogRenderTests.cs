@@ -58,6 +58,7 @@ public class DialogRenderTests
         Render(new SettingsDialog(new SettingsViewModel(h.Catalog.State.Settings, new FakeDialogs(), strings)), outDir, "settings");
         using var clone = new CloneViewModel(h.Catalog, new FakeDialogs(), strings, @"C:\Users\me\source\repos") { Url = "https://github.com/user/new-tool" };
         Render(new CloneDialog(clone), outDir, "clone");
+        Render(new AboutDialog(new AboutViewModel(new FakeShell(), strings, FileLoggerProvider.DefaultDirectory)), outDir, "about");
 
         // Accessibility: glyph-only icon buttons are named by their tooltip; the typed-confirmation box has a label.
         var icon = new System.Windows.Controls.Button { Style = (Style)app.FindResource("IconButton"), Content = "\uE713", ToolTip = "Ayarlar" };

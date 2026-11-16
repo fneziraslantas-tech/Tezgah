@@ -20,6 +20,7 @@
         <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenFolderCommand}" />
         <KeyBinding Key="T" Modifiers="Control" Command="{Binding OpenTerminalCommand}" />
         <KeyBinding Key="OemComma" Modifiers="Control" Command="{Binding OpenSettingsCommand}" />
+        <KeyBinding Key="F1" Command="{Binding ShowAboutCommand}" />
     </Window.InputBindings>
 
     <Grid x:Name="Root" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
@@ -43,7 +44,7 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-                <Image Source="pack://application:,,,/Tezgah;component/Assets/tezgah.ico" Width="22" Height="22" />
+                <views:LogoImage Width="24" Height="24" />
                 <TextBlock Text="Tezgah" FontFamily="{StaticResource DisplayFont}" FontSize="17" FontWeight="SemiBold" Margin="8,0,0,1" VerticalAlignment="Center" />
                 <Border Style="{StaticResource Badge}" Margin="8,0,0,0" Visibility="{Binding IsDemo, Converter={StaticResource BoolToVis}}"
                         Background="{DynamicResource SystemFillColorCautionBackgroundBrush}" ToolTip="{DynamicResource Demo_Tooltip}">
@@ -128,7 +129,9 @@
                     </ContextMenu>
                 </Button.ContextMenu>
             </Button>
-            <Button Grid.Column="5" Style="{StaticResource IconButton}" Content="&#xE713;" Command="{Binding OpenSettingsCommand}"
+            <Button Grid.Column="5" Style="{StaticResource IconButton}" Content="&#xE946;" Command="{Binding ShowAboutCommand}" Margin="0,0,2,0"
+                    ToolTip="{DynamicResource About_Tooltip}" />
+            <Button Grid.Column="6" Style="{StaticResource IconButton}" Content="&#xE713;" Command="{Binding OpenSettingsCommand}"
                     ToolTip="{DynamicResource Settings_Tooltip}" />
         </Grid>
 
@@ -652,12 +655,37 @@
             <!-- empty state (first launch) -->
             <Border Grid.ColumnSpan="3" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
                     Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
-                    <Image Source="pack://application:,,,/Tezgah;component/Assets/tezgah.ico" Width="72" Height="72" />
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+                    <views:LogoImage Width="72" Height="72" HorizontalAlignment="Center" />
                     <TextBlock Text="{DynamicResource Empty_Title}" FontFamily="{StaticResource DisplayFont}" FontSize="26" FontWeight="SemiBold"
                                HorizontalAlignment="Center" Margin="0,18,0,8" />
-                    <TextBlock Text="{DynamicResource Empty_Body}" TextWrapping="Wrap" TextAlignment="Center"
+                    <TextBlock Text="{DynamicResource About_Summary}" TextWrapping="Wrap" TextAlignment="Center"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}" LineHeight="20" />
+                    <!-- compact "how to use": the same steps as the About dialog -->
+                    <TextBlock Text="{DynamicResource About_HowTo}" Style="{StaticResource Caption}" HorizontalAlignment="Center" Margin="0,22,0,8" />
+                    <WrapPanel HorizontalAlignment="Center">
+                        <WrapPanel.Resources>
+                            <Style x:Key="Step" TargetType="Border" BasedOn="{StaticResource Badge}">
+                                <Setter Property="Padding" Value="9,3,9,4" />
+                                <Setter Property="Margin" Value="0,0,0,6" />
+                                <Setter Property="CornerRadius" Value="12" />
+                            </Style>
+                            <Style x:Key="Arrow" TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                                <Setter Property="FontSize" Value="10" />
+                                <Setter Property="Margin" Value="7,0,7,6" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                            </Style>
+                        </WrapPanel.Resources>
+                        <Border Style="{StaticResource Step}"><TextBlock Text="{DynamicResource About_HowScan}" FontSize="12" /></Border>
+                        <TextBlock Text="&#xE76C;" Style="{StaticResource Arrow}" />
+                        <Border Style="{StaticResource Step}"><TextBlock Text="{DynamicResource About_HowSelect}" FontSize="12" /></Border>
+                        <TextBlock Text="&#xE76C;" Style="{StaticResource Arrow}" />
+                        <Border Style="{StaticResource Step}"><TextBlock Text="{DynamicResource About_HowRun}" FontSize="12" /></Border>
+                        <TextBlock Text="&#xE76C;" Style="{StaticResource Arrow}" />
+                        <Border Style="{StaticResource Step}"><TextBlock Text="{DynamicResource About_HowClean}" FontSize="12" /></Border>
+                        <TextBlock Text="&#xE76C;" Style="{StaticResource Arrow}" />
+                        <Border Style="{StaticResource Step}"><TextBlock Text="{DynamicResource About_HowRemove}" FontSize="12" /></Border>
+                    </WrapPanel>
                     <Button Style="{StaticResource PrimaryButton}" Command="{Binding ScanCommand}" HorizontalAlignment="Center" Margin="0,24,0,0" Padding="24,11">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE721;" Style="{StaticResource Icon}" Margin="0,0,10,0" />
@@ -665,6 +693,9 @@
                         </StackPanel>
                     </Button>
                     <TextBlock Text="{DynamicResource Empty_Privacy}" Style="{StaticResource Muted}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,16,0,0" />
+                    <Button Style="{StaticResource LinkButton}" Command="{Binding ShowAboutCommand}" HorizontalAlignment="Center" Margin="0,8,0,0">
+                        <TextBlock Text="{DynamicResource Empty_MoreInfo}" FontSize="12" />
+                    </Button>
                 </StackPanel>
             </Border>
         </Grid>
