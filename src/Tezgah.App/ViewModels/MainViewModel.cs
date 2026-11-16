@@ -628,6 +628,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void ShowAbout() => _dialogs.ShowAbout(new AboutViewModel(_shell, _s, FileLoggerProvider.DefaultDirectory));
+
+    [RelayCommand]
     private async Task OpenSettingsAsync()
     {
         var current = _catalog.State.Settings;

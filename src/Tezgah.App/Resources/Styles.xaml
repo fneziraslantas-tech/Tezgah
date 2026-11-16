@@ -256,6 +256,7 @@
         <Setter Property="ShowInTaskbar" Value="False" />
         <Setter Property="ResizeMode" Value="NoResize" />
         <Setter Property="SizeToContent" Value="Height" />
+        <Setter Property="UseLayoutRounding" Value="True" />
         <Setter Property="Width" Value="560" />
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
         <Setter Property="FontSize" Value="13" />

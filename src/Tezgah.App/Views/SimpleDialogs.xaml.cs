@@ -15,6 +15,17 @@ public partial class SettingsDialog : Window
     }
 }
 
+public partial class AboutDialog : Window
+{
+    public AboutDialog(AboutViewModel viewModel)
+    {
+        ArgumentNullException.ThrowIfNull(viewModel);
+        DataContext = viewModel;
+        InitializeComponent();
+        viewModel.CloseRequested += (_, _) => Close();
+    }
+}
+
 public partial class CloneDialog : Window
 {
     private readonly CloneViewModel _vm;

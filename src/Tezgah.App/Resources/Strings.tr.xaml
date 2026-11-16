@@ -73,7 +73,7 @@
 
     <!-- ayrıntı -->
     <sys:String x:Key="Detail_NothingSelected">Soldan bir öğe seç.</sys:String>
-    <sys:String x:Key="Detail_ShortcutsHint">Enter çalıştır · Ctrl+. durdur · Del kaldır · Ctrl+O klasör · Ctrl+T terminal · F5 tara</sys:String>
+    <sys:String x:Key="Detail_ShortcutsHint">Enter çalıştır · Ctrl+. durdur · Del kaldır · Ctrl+O klasör · Ctrl+T terminal · F5 tara · F1 yardım</sys:String>
     <sys:String x:Key="Detail_Path">Konum</sys:String>
     <sys:String x:Key="Detail_Link">Kaynak</sys:String>
     <sys:String x:Key="Detail_Info">Bilgi</sys:String>
@@ -201,10 +201,46 @@
 
     <!-- boş durum -->
     <sys:String x:Key="Empty_Title">Bilgisayarındakileri bulalım</sys:String>
-    <sys:String x:Key="Empty_Body">Tezgah; GitHub'dan klonladığın repoları, kurduğun uygulamaları ve komut satırı araçlarını tek listede toplar. Unuttuğun bir projeyi bulur, tek tıkla çalıştırır, işin bitince temizce kaldırırsın.</sys:String>
     <sys:String x:Key="Empty_ScanButton">Bilgisayarı tara</sys:String>
     <sys:String x:Key="Empty_Privacy">Tarama yalnız bu bilgisayarda yapılır; hiçbir şey dışarı gönderilmez, hiçbir kod sen istemeden çalıştırılmaz.</sys:String>
 
+    <sys:String x:Key="Empty_MoreInfo">Tezgah hakkında daha fazlası (F1)</sys:String>
+
+    <!-- hakkında -->
+    <sys:String x:Key="About_Tooltip">Hakkında (F1)</sys:String>
+    <sys:String x:Key="About_Title">Tezgah hakkında</sys:String>
+    <sys:String x:Key="About_Version">Sürüm {0} · MIT lisanslı, açık kaynak</sys:String>
+    <sys:String x:Key="About_Summary">Bilgisayarına kurduğun, GitHub'dan klonladığın ve unuttuğun her şeyi tek yerde gösterir; tek tıkla çalıştırır, istemediğinde iz bırakmadan kaldırır.</sys:String>
+    <sys:String x:Key="About_HowTo">NASIL KULLANILIR</sys:String>
+    <sys:String x:Key="About_HowScan">Tara</sys:String>
+    <sys:String x:Key="About_HowScan_Body">Git repolarını, proje klasörlerini, kurulu uygulamaları ve araçları bulur.</sys:String>
+    <sys:String x:Key="About_HowSelect">Seç</sys:String>
+    <sys:String x:Key="About_HowSelect_Body">Ara ya da filtrele, listeden bir öğe seç; ayrıntılar ve komutlar sağda görünür.</sys:String>
+    <sys:String x:Key="About_HowRun">Çalıştır / Durdur</sys:String>
+    <sys:String x:Key="About_HowRun_Body">Projeyi tek tıkla çalıştır, çıktısını canlı izle, işin bitince bütün süreçleriyle durdur.</sys:String>
+    <sys:String x:Key="About_HowClean">Alan aç</sys:String>
+    <sys:String x:Key="About_HowClean_Body">node_modules, .venv, bin/obj gibi yeniden üretilebilen klasörleri sil.</sys:String>
+    <sys:String x:Key="About_HowRemove">Kaldır</sys:String>
+    <sys:String x:Key="About_HowRemove_Body">İstemediğini iz bırakmadan kaldır: proje klasörü, uygulama, kısayollar ve kalıntılar.</sys:String>
+    <sys:String x:Key="About_Safety">GÜVENLİK</sys:String>
+    <sys:String x:Key="About_Safety_Trust">Bir projenin kodu, sen o klasöre güvendiğini onaylamadan asla çalıştırılmaz.</sys:String>
+    <sys:String x:Key="About_Safety_Inspect">Güvenmediğin repolar hiçbir program çalıştırılmadan, yalnızca dosyaları okunarak incelenir.</sys:String>
+    <sys:String x:Key="About_Safety_Recycle">Silinen klasörler varsayılan olarak Geri Dönüşüm Kutusu'na gider; istersen oradan geri alırsın.</sys:String>
+    <sys:String x:Key="About_Safety_Typed">Kaydedilmemiş git çalışması varsa kaldırmak için öğenin adını yazman gerekir.</sys:String>
+    <sys:String x:Key="About_Safety_Audit">Her kaldırma işlemi denetim kaydına yazılır:</sys:String>
+    <sys:String x:Key="About_Shortcuts">KLAVYE KISAYOLLARI</sys:String>
+    <sys:String x:Key="About_Key_Scan">Tara</sys:String>
+    <sys:String x:Key="About_Key_Search">Ara</sys:String>
+    <sys:String x:Key="About_Key_Run">Çalıştır</sys:String>
+    <sys:String x:Key="About_Key_Stop">Durdur</sys:String>
+    <sys:String x:Key="About_Key_Remove">Kaldır</sys:String>
+    <sys:String x:Key="About_Key_Folder">Klasörü aç</sys:String>
+    <sys:String x:Key="About_Key_Terminal">Terminalde aç</sys:String>
+    <sys:String x:Key="About_Key_Settings">Ayarlar</sys:String>
+    <sys:String x:Key="About_Key_About">Hakkında</sys:String>
+    <sys:String x:Key="About_Repository">GitHub</sys:String>
+    <sys:String x:Key="About_License">MIT lisansı</sys:String>
+    <sys:String x:Key="About_OpenLogs">Günlük klasörünü aç</sys:String>
     <!-- durum çubuğu -->
     <sys:String x:Key="Status_Totals">{0} repo · {1} uygulama · {2} araç · {3} · {4} unutulmuş · {5} çalışıyor</sys:String>
     <sys:String x:Key="Status_LastScan">Son tarama: {0}</sys:String>

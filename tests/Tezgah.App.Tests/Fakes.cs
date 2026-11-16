@@ -84,6 +84,10 @@ internal sealed class FakeDialogs : IDialogService
     {
     }
 
+    public List<AboutViewModel> AboutShown { get; } = [];
+
+    public void ShowAbout(AboutViewModel viewModel) => AboutShown.Add(viewModel);
+
     public string? PickFolder(string title, string? initialDirectory) => null;
 }
 
@@ -99,7 +103,13 @@ internal sealed class FakeShell : IShellService
         return true;
     }
 
-    public bool OpenFolder(string path) => true;
+    public List<string> OpenedFolders { get; } = [];
+
+    public bool OpenFolder(string path)
+    {
+        OpenedFolders.Add(path);
+        return true;
+    }
 
     public bool OpenTerminal(string path) => true;
 

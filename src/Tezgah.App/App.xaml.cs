@@ -20,6 +20,8 @@ namespace Tezgah.App;
 ///   --theme T       light | dark | system for this session (does not change saved settings)
 ///   --lang L        tr | en for this session
 ///   --screenshot P  (Debug builds only) demo mode: render the main window to PNG file P after startup and exit
+///   --screenshot-about P (with --screenshot) also render the About dialog to PNG file P
+///   --export-logo D (Debug builds only) write tezgah.ico, logo.svg and per-size PNGs of the logo into folder D and exit
 /// </summary>
 public partial class App : Application, IDisposable
 {
@@ -34,6 +36,12 @@ public partial class App : Application, IDisposable
         ArgumentNullException.ThrowIfNull(e);
         base.OnStartup(e);
         var args = e.Args;
+        if (DevLogoExportFolder(args) is { } logoFolder)
+        {
+            Shutdown(ExportLogo(logoFolder));
+            return;
+        }
+
         var screenshotPath = DevScreenshotPath(args);
         var demoEmpty = args.Contains("--demo-empty", StringComparer.OrdinalIgnoreCase);
 
@@ -86,7 +94,7 @@ public partial class App : Application, IDisposable
 
         if (screenshotPath is not null && _services.GetRequiredService<AppMode>().IsDemo)
         {
-            await CaptureAsync(window, vm, screenshotPath);
+            await CaptureAsync(window, vm, screenshotPath, ArgValue(args, "--screenshot-about"));
         }
     }
 
@@ -99,6 +107,46 @@ public partial class App : Application, IDisposable
         _ = args;
         return null;
 #endif
+    }
+
+    /// <summary>The logo export switch (used by Assets/make-icon.ps1) exists only in Debug builds.</summary>
+    internal static string? DevLogoExportFolder(string[] args)
+    {
+#if DEBUG
+        return ArgValue(args, "--export-logo");
+#else
+        _ = args;
+        return null;
+#endif
+    }
+
+    /// <summary>
+    /// Writes tezgah.ico, logo.svg and logo-N.png previews (16-256 px, each rendered separately) into <paramref name="folder"/>.
+    /// Returns the process exit code.
+    /// </summary>
+    internal static int ExportLogo(string folder)
+    {
+        try
+        {
+            Directory.CreateDirectory(folder);
+            using (var ico = File.Create(Path.Combine(folder, "tezgah.ico")))
+            {
+                Views.LogoArt.WriteIco(ico);
+            }
+
+            File.WriteAllText(Path.Combine(folder, "logo.svg"), Views.LogoArt.ToSvg());
+            foreach (var size in Views.LogoArt.IconSizes)
+            {
+                File.WriteAllBytes(Path.Combine(folder, $"logo-{size}.png"), Views.LogoArt.Png(Views.LogoArt.Render(size)));
+            }
+
+            return 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
     }
 
     /// <summary>
@@ -257,8 +305,11 @@ public partial class App : Application, IDisposable
 
     // ───────────────────────────── dev screenshot ─────────────────────────────
 
-    /// <summary>Selects a runnable trusted item, starts it, waits for output, renders the window to PNG and exits.</summary>
-    private async Task CaptureAsync(MainWindow window, MainViewModel vm, string path)
+    /// <summary>
+    /// Selects a runnable trusted item, starts it, waits for output, renders the window to PNG (and, with
+    /// <c>--screenshot-about P</c>, the About dialog to P) and exits.
+    /// </summary>
+    private async Task CaptureAsync(MainWindow window, MainViewModel vm, string path, string? aboutPath)
     {
         try
         {
@@ -274,24 +325,20 @@ public partial class App : Application, IDisposable
             }
 
             await Task.Delay(2600);
-            window.UpdateLayout();
-            var dpi = VisualTreeHelper.GetDpi(window);
-            var root = (FrameworkElement)window.Content;
-            var bmp = new RenderTargetBitmap(
-                (int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
-                dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
-            bmp.Render(root);
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bmp));
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-            using (var fs = File.Create(path))
+            SavePng(window, path);
+            if (aboutPath is not null && _services is { } services)
             {
-                encoder.Save(fs);
-            }
-
-            if (_log?.IsEnabled(LogLevel.Information) == true)
-            {
-                _log.LogInformation("Screenshot written to {Path}", Path.GetFullPath(path));
+                // The About dialog, shown modeless next to the main window just long enough to be rendered.
+                var about = new Views.AboutDialog(new AboutViewModel(services.GetRequiredService<IShellService>(), services.GetRequiredService<IStrings>(), FileLoggerProvider.DefaultDirectory))
+                {
+                    Owner = window,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    ShowActivated = false,
+                };
+                about.Show();
+                await Task.Delay(600);
+                SavePng(about, aboutPath);
+                about.Close();
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -308,6 +355,37 @@ public partial class App : Application, IDisposable
 
             window.AllowCloseWithoutPrompt();
             Shutdown(0);
+        }
+    }
+
+    /// <summary>Renders a window's content (on its own background) at the window's DPI and writes it as PNG.</summary>
+    private void SavePng(Window window, string path)
+    {
+        window.UpdateLayout();
+        var dpi = VisualTreeHelper.GetDpi(window);
+        var root = (FrameworkElement)window.Content;
+        var bmp = new RenderTargetBitmap(
+            (int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+        var background = new DrawingVisual();
+        using (var dc = background.RenderOpen())
+        {
+            dc.DrawRectangle(window.Background, null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
+        }
+
+        bmp.Render(background);
+        bmp.Render(root);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bmp));
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        using (var fs = File.Create(path))
+        {
+            encoder.Save(fs);
+        }
+
+        if (_log?.IsEnabled(LogLevel.Information) == true)
+        {
+            _log.LogInformation("Screenshot written to {Path}", Path.GetFullPath(path));
         }
     }
 }
