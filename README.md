@@ -99,6 +99,15 @@ Tehdit modeli ve açık bildirme yolu: **[SECURITY.md](SECURITY.md)**.
 
 Yöntem, kapsam, sınırlar ve bulgu-PR eşlemesi: [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md).
 
+### Kod imzalama politikası (Code signing policy)
+
+Windows sürümleri, [SignPath.io](https://about.signpath.io) tarafından ücretsiz sağlanan kod imzalama ile, sertifikası [SignPath Foundation](https://signpath.org) tarafından verilmiş olarak imzalanacaktır. **Başvuru süreci devam ediyor; şu anki sürümler henüz imzasızdır** (yukarıdaki SHA-256 ve attestation doğrulamasını kullanın).
+
+- Yazarlar ve gözden geçirenler (committers & reviewers): [proje sahibi ve katkıcılar](https://github.com/fneziraslantas-tech/Tezgah/graphs/contributors)
+- İmza onaylayıcı (approver): [@fneziraslantas-tech](https://github.com/fneziraslantas-tech)
+- Yalnızca bu depodaki kaynaktan, GitHub Actions ile derlenen yapıtlar imzalanır; her imza isteği elle onaylanır.
+
+**Gizlilik:** Bu program, kullanıcı ya da onu kuran/çalıştıran kişi özellikle istemedikçe başka ağ sistemlerine hiçbir bilgi aktarmaz. (Ağ erişimi yalnızca kullanıcının başlattığı git klonlama, çekme (pull) ve yenileme (fetch) ile kullanıcının açtığı bağlantılarla sınırlıdır; telemetri yoktur.)
 ## Mimari
 
 ```
@@ -215,6 +224,15 @@ Two audits ran before the first public release (v0.1.1):
 
 Method, scope, limits and the finding-to-PR mapping: [docs/security-audit-2026-11.md](docs/security-audit-2026-11.md).
 
+### Code signing policy
+
+Windows releases will be signed with free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). **The application is in progress; current releases are not yet signed** (use the SHA-256 and attestation checks above).
+
+- Committers and reviewers: [the owner and contributors](https://github.com/fneziraslantas-tech/Tezgah/graphs/contributors)
+- Approver: [@fneziraslantas-tech](https://github.com/fneziraslantas-tech)
+- Only artifacts built by GitHub Actions from this repository's source are signed; every signing request is approved manually.
+
+**Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. (Network access is limited to git clone, pull and fetch started by the user and links the user opens; there is no telemetry.)
 ### Architecture
 
 `Tezgah.Core` (UI-independent: Model, Abstractions, Discovery, Catalog, Execution, Safety, Uninstall, Interop) and `Tezgah.App` (WPF, MVVM with CommunityToolkit.Mvvm, Fluent theme). Layers only talk through the contracts in `Abstractions`; the core registers itself with `services.AddTezgahCore()` (one partial file per layer), `App.ConfigureServices` adds the WPF services and swaps in demo fakes for `--demo`. View-models never touch WPF types: windows, dialogs and shell actions sit behind `IDialogService`, `IShellService` and `IUiDispatcher`. See the diagram above.
