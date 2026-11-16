@@ -55,25 +55,7 @@ public partial class App : Application, IDisposable
         }
 
         var services = new ServiceCollection();
-        services.AddLogging(b => b.AddProvider(_logProvider).SetMinimumLevel(LogLevel.Information));
-        services.AddTezgahCore();
-        var coreMissing = !services.Any(d => d.ServiceType == typeof(ICatalogService));
-        var demo = forceDemo || coreMissing;
-        if (demo)
-        {
-            services.AddTezgahDemo(replace: forceDemo, startEmpty: demoEmpty);
-        }
-
-        services.AddSingleton(new AppMode(demo));
-        services.AddSingleton(TimeProvider.System);
-        services.AddSingleton<IStrings, ResourceStrings>();
-        services.AddSingleton<IUiDispatcher, WpfUiDispatcher>();
-        services.AddSingleton<IDialogService, DialogService>();
-        services.AddSingleton<IShellService, ShellService>();
-        services.AddSingleton<IClipboardService, WpfClipboardService>();
-        services.AddSingleton<IAppearanceService, AppearanceService>();
-        services.AddSingleton<MainViewModel>();
-        services.AddSingleton<MainWindow>();
+        var (demo, coreMissing) = ConfigureServices(services, _logProvider, forceDemo, demoEmpty);
         _services = services.BuildServiceProvider();
         _log = _services.GetRequiredService<ILoggerFactory>().CreateLogger("Tezgah.App");
         if (_log.IsEnabled(LogLevel.Information))
@@ -117,6 +99,43 @@ public partial class App : Application, IDisposable
         _ = args;
         return null;
 #endif
+    }
+
+    /// <summary>
+    /// Registers every service the app uses. Kept separate from <see cref="OnStartup"/> so tests can verify the
+    /// composition root resolves without starting WPF. Returns whether demo services are used and whether the core was missing.
+    /// </summary>
+    internal static (bool Demo, bool CoreMissing) ConfigureServices(IServiceCollection services, ILoggerProvider? logProvider, bool forceDemo, bool demoEmpty)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddLogging(b =>
+        {
+            if (logProvider is not null)
+            {
+                b.AddProvider(logProvider);
+            }
+
+            b.SetMinimumLevel(LogLevel.Information);
+        });
+        services.AddTezgahCore();
+        var coreMissing = !services.Any(d => d.ServiceType == typeof(ICatalogService));
+        var demo = forceDemo || coreMissing;
+        if (demo)
+        {
+            services.AddTezgahDemo(replace: forceDemo, startEmpty: demoEmpty);
+        }
+
+        services.AddSingleton(new AppMode(demo));
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IStrings, ResourceStrings>();
+        services.AddSingleton<IUiDispatcher, WpfUiDispatcher>();
+        services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<IShellService, ShellService>();
+        services.AddSingleton<IClipboardService, WpfClipboardService>();
+        services.AddSingleton<IAppearanceService, AppearanceService>();
+        services.AddSingleton<MainViewModel>();
+        services.AddSingleton<MainWindow>();
+        return (demo, coreMissing);
     }
 
     protected override void OnExit(ExitEventArgs e)
