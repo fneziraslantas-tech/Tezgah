@@ -23,6 +23,32 @@ public sealed record CommandSpec
     public string Display =>
         string.Join(' ', new[] { FileName }.Concat(Arguments).Select(a =>
             a.Length == 0 || a.Any(c => char.IsWhiteSpace(c) || c == '"') ? "\"" + a.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"" : a));
+
+    /// <summary>
+    /// True when both specs start exactly the same process: executable, every argument, working directory, environment
+    /// and tree-wait flag compared ordinally (the record's own equality compares the collections by reference).
+    /// </summary>
+    public static bool IsSameInvocation(CommandSpec? a, CommandSpec? b)
+    {
+        if (a is null || b is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(a, b))
+        {
+            return true;
+        }
+
+        var envA = a.Environment ?? new Dictionary<string, string>();
+        var envB = b.Environment ?? new Dictionary<string, string>();
+        return string.Equals(a.FileName, b.FileName, StringComparison.Ordinal)
+            && string.Equals(a.WorkingDirectory, b.WorkingDirectory, StringComparison.Ordinal)
+            && a.WaitForProcessTree == b.WaitForProcessTree
+            && (a.Arguments ?? []).SequenceEqual(b.Arguments ?? [], StringComparer.Ordinal)
+            && envA.Count == envB.Count
+            && envA.All(kv => envB.TryGetValue(kv.Key, out var v) && string.Equals(kv.Value, v, StringComparison.Ordinal));
+    }
 }
 
 public enum RunProfileKind

@@ -114,7 +114,7 @@ public sealed class CatalogTrustTests : IDisposable
 
         var profile = svc.GetProfiles(item.Id)[0];
         await using var runs = new Tezgah.Core.Execution.RunService(svc, Tezgah.Core.Safety.PathGuard.Default, new Tezgah.Core.Execution.ProcessHost());
-        await Assert.ThrowsAsync<UntrustedItemException>(() => runs.StartAsync(item.Id, profile, CancellationToken.None));
+        await Assert.ThrowsAsync<UntrustedItemException>(() => runs.StartAsync(item.Id, profile, profile.Command, CancellationToken.None));
 
         // Unrelated meta edits never launder the stale decision onto the new folder...
         await svc.UpdateMetaAsync(item.Id, m => m with { Favorite = true }, CancellationToken.None);

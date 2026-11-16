@@ -171,8 +171,12 @@ public interface IRunService
     IReadOnlyList<IRunningProcess> Running { get; }
     event EventHandler? RunningChanged;
 
-    /// <summary>Starts a profile. Throws <see cref="UntrustedItemException"/> if the item is not trusted yet.</summary>
-    Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CancellationToken ct);
+    /// <summary>
+    /// Starts the catalog's copy of the profile with <paramref name="profile"/>'s id. Throws <see cref="UntrustedItemException"/>
+    /// if the item is not trusted yet, and <see cref="CommandChangedException"/> when that copy no longer is
+    /// <paramref name="expectedCommand"/> — the command the user was shown (trust prompt, profile list) and agreed to run.
+    /// </summary>
+    Task<IRunningProcess> StartAsync(string itemId, RunProfile profile, CommandSpec expectedCommand, CancellationToken ct);
     Task StopAsync(Guid runId, CancellationToken ct);
     Task StopAllAsync(CancellationToken ct);
     IReadOnlyList<IRunningProcess> ForItem(string itemId);
@@ -199,4 +203,18 @@ public sealed class UntrustedItemException(string itemId)
     : InvalidOperationException($"Item '{itemId}' is not trusted. Ask the user to confirm before executing its code.")
 {
     public string ItemId { get; } = itemId;
+}
+
+/// <summary>
+/// The command the catalog now holds for a profile id is not the one the user was shown (the folder was re-read or
+/// rescanned meanwhile, e.g. while the trust prompt was open). Nothing was started; the user has to look again.
+/// </summary>
+public sealed class CommandChangedException(string itemId, string profileId)
+    : InvalidOperationException(L.T(
+        "Bu profilin komutu siz onayladıktan sonra değişti; hiçbir şey çalıştırılmadı. Güncel komutu kontrol edip yeniden deneyin.",
+        "This profile's command changed after you approved it; nothing was run. Check the current command and try again."))
+{
+    public string ItemId { get; } = itemId;
+
+    public string ProfileId { get; } = profileId;
 }

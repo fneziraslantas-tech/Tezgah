@@ -690,9 +690,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     internal async Task<RunSessionViewModel?> StartAsync(ItemViewModel item, RunProfile profile)
     {
-        if (!_catalog.IsTrusted(item.Id) && !await AskTrustAsync(item, profile))
+        // The command the user approves - in the profile list or, for an untrusted folder, in the trust prompt - is the
+        // one RunService has to find in the catalog; anything else (rescan, re-read meanwhile) is refused, never run.
+        var shown = profile;
+        if (!_catalog.IsTrusted(item.Id))
         {
-            return null;
+            if (await AskTrustAsync(item, profile) is not { } confirmed)
+            {
+                return null;
+            }
+
+            shown = confirmed;
         }
 
         item.IsBusy = true;
@@ -701,17 +709,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             IRunningProcess proc;
             try
             {
-                proc = await _runs.StartAsync(item.Id, profile, CancellationToken.None);
+                proc = await _runs.StartAsync(item.Id, shown, shown.Command, CancellationToken.None);
             }
             catch (UntrustedItemException)
             {
                 // trust was revoked elsewhere or the service has a stricter view: ask once more, then retry once
-                if (!await AskTrustAsync(item, profile))
+                if (await AskTrustAsync(item, shown) is not { } again)
                 {
                     return null;
                 }
 
-                proc = await _runs.StartAsync(item.Id, profile, CancellationToken.None);
+                shown = again;
+                proc = await _runs.StartAsync(item.Id, shown, shown.Command, CancellationToken.None);
             }
 
             var session = Attach(item, proc);
@@ -719,6 +728,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             UpdateRunningFlags();
             UpdateStatus();
             return session;
+        }
+        catch (CommandChangedException ex)
+        {
+            _log.LogWarning(ex, "Command of {Item} {Profile} changed after it was shown; not started", item.Id, shown.Id);
+            SyncFromCatalog();
+            Notify(_s.Format("Run_CommandChanged", shown.Label), isError: true);
+            return null;
         }
         catch (Exception ex)
         {
@@ -732,13 +748,35 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private Task<bool> AskTrustAsync(ItemViewModel item, RunProfile profile) => AskTrustAsync(item, profile.Command.Display);
+    /// <summary>
+    /// Trust prompt for running <paramref name="profile"/>. The prompt shows the catalog's command for the profile id as it
+    /// is after any re-read (not the possibly stale view-model copy); that profile is returned when the user confirms, so
+    /// the caller can bind the run to exactly what was shown. Null when declined or when the id no longer exists.
+    /// </summary>
+    private async Task<RunProfile?> AskTrustAsync(ItemViewModel item, RunProfile profile)
+    {
+        RunProfile? current = null;
+        var confirmed = await AskTrustAsync(item, () =>
+        {
+            current = _catalog.GetProfiles(item.Id).FirstOrDefault(p => p.Id == profile.Id);
+            if (current is null)
+            {
+                Notify(_s.Format("Run_ProfileGone", profile.Label), isError: true);
+            }
+
+            return current?.Command.Display;
+        });
+        return confirmed ? current : null;
+    }
+
+    private Task<bool> AskTrustAsync(ItemViewModel item, string commandLine) => AskTrustAsync(item, () => commandLine);
 
     /// <summary>
     /// Workspace-trust prompt for anything that executes the folder's code or honours its repository config
-    /// (runs, but also git pull/fetch, which run hooks, filters and core.sshCommand).
+    /// (runs, but also git pull/fetch, which run hooks, filters and core.sshCommand). <paramref name="commandLine"/> is
+    /// evaluated after any re-read of the folder; null aborts without prompting.
     /// </summary>
-    private async Task<bool> AskTrustAsync(ItemViewModel item, string commandLine)
+    private async Task<bool> AskTrustAsync(ItemViewModel item, Func<string?> commandLine)
     {
         if (_catalog.GetMeta(item.Id).Trusted)
         {
@@ -747,10 +785,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             SyncFromCatalog();
         }
 
+        if (commandLine() is not { } shownCommand)
+        {
+            return false;
+        }
+
         var meta = _catalog.GetMeta(item.Id);
         var claimed = item.Git?.RemoteUrl ?? item.Item.WebUrl;
         var verified = meta.ClonedFrom is { } cloned && (claimed is null || string.Equals(cloned, claimed, StringComparison.OrdinalIgnoreCase));
-        var prompt = new TrustPrompt(item.Name, item.Path, verified ? meta.ClonedFrom : claimed, commandLine, verified);
+        var prompt = new TrustPrompt(item.Name, item.Path, verified ? meta.ClonedFrom : claimed, shownCommand, verified);
         if (!_dialogs.ConfirmTrust(prompt))
         {
             return false;

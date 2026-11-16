@@ -64,9 +64,13 @@ internal sealed class FakeDialogs : IDialogService
     {
     }
 
+    /// <summary>Runs while the (modal) trust prompt is "open", e.g. to simulate a scan finishing meanwhile.</summary>
+    public Action<TrustPrompt>? WhileTrustPromptOpen { get; set; }
+
     public bool ConfirmTrust(TrustPrompt prompt)
     {
         TrustPrompts.Add(prompt);
+        WhileTrustPromptOpen?.Invoke(prompt);
         return TrustAnswer;
     }
 
