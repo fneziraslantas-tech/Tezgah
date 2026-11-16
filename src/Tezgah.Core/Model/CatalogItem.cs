@@ -95,8 +95,25 @@ public sealed record GitInfo
     public DateTimeOffset? LastCommitAt { get; init; }
     public string? LastCommitSubject { get; init; }
 
+    /// <summary>
+    /// Commits reachable from any local branch (not only HEAD) but from no remote-tracking ref. Null when it could not be
+    /// determined (treated as unsaved work: fail closed).
+    /// </summary>
+    public int? UnpushedCommits { get; init; } = 0;
+
+    /// <summary>Local branches that hold work no remote has (no upstream, ahead of it, or upstream deleted). Capped list.</summary>
+    public IReadOnlyList<string> UnpushedBranches { get; init; } = [];
+
+    /// <summary>The checked-out branch tracks an upstream branch that no longer exists ("[gone]").</summary>
+    public bool UpstreamGone { get; init; }
+
+    /// <summary>Linked worktrees of this (main) repository; deleting it breaks them.</summary>
+    public IReadOnlyList<string> LinkedWorktrees { get; init; } = [];
+
     /// <summary>True when deleting the folder would lose work that exists nowhere else.</summary>
-    public bool HasUnsavedWork => ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || (!HasUpstream && LastCommitAt is not null);
+    public bool HasUnsavedWork =>
+        ModifiedFiles > 0 || UntrackedFiles > 0 || Stashes > 0 || Ahead > 0 || ((!HasUpstream || UpstreamGone) && LastCommitAt is not null) ||
+        UnpushedCommits is null or > 0 || LinkedWorktrees.Count > 0;
 }
 
 /// <summary>A regenerable directory inside a project.</summary>

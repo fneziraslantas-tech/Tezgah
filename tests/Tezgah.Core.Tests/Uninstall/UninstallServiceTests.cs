@@ -74,6 +74,26 @@ public sealed class UninstallServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Unpushed_commits_on_other_branches_require_typed_confirmation()
+    {
+        var item = Repo();
+        var (service, _, _) = Create(item, CleanGit with { UnpushedCommits = 15, UnpushedBranches = ["feature/x"] });
+
+        var plan = await service.PlanAsync(item.Id, CancellationToken.None);
+
+        Assert.True(plan.RequiresTypedConfirmation);
+        Assert.Contains(plan.Warnings, w => w.Level == WarningLevel.Danger && w.Message.Contains("feature/x", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unknown_branch_state_fails_closed()
+    {
+        var item = Repo();
+        var (service, _, _) = Create(item, CleanGit with { UnpushedCommits = null });
+        Assert.True((await service.PlanAsync(item.Id, CancellationToken.None)).RequiresTypedConfirmation);
+    }
+
+    [Fact]
     public async Task No_remote_is_danger()
     {
         var item = Repo();

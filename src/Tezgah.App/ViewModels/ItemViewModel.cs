@@ -96,7 +96,7 @@ public sealed partial class ItemViewModel : ObservableObject
 
     public bool IsDirty => Item.Git is { } g && (g.ModifiedFiles > 0 || g.UntrackedFiles > 0 || g.Stashes > 0);
 
-    public bool IsUnpushed => Item.Git is { } g && (g.Ahead > 0 || (!g.HasUpstream && g.LastCommitAt is not null));
+    public bool IsUnpushed => Item.Git is { } g && (g.Ahead > 0 || g.UnpushedCommits is null or > 0 || ((!g.HasUpstream || g.UpstreamGone) && g.LastCommitAt is not null));
 
     public string AttentionText
     {

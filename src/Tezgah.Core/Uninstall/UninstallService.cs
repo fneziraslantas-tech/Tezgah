@@ -322,6 +322,31 @@ internal sealed class UninstallService(
                     $"'{info.Branch ?? "?"}' dalının uzakta karşılığı yok",
                     $"branch '{info.Branch ?? "?"}' has no upstream"));
             }
+            else if (info.UpstreamGone && info.LastCommitAt is not null)
+            {
+                parts.Add(L.T(
+                    $"'{info.Branch ?? "?"}' dalının uzaktaki karşılığı silinmiş",
+                    $"the upstream of branch '{info.Branch ?? "?"}' was deleted"));
+            }
+
+            if (info.UnpushedCommits is null)
+            {
+                parts.Add(L.T("diğer dallarda gönderilmemiş commit olup olmadığı doğrulanamadı", "could not rule out unpushed commits on other branches"));
+            }
+            else if (info.UnpushedCommits > info.Ahead)
+            {
+                var names = info.UnpushedBranches.Count > 0 ? " (" + string.Join(", ", info.UnpushedBranches.Take(5)) + ")" : string.Empty;
+                parts.Add(L.T(
+                    $"yerel dallarda hiçbir uzakta olmayan {info.UnpushedCommits} commit{names}",
+                    $"{info.UnpushedCommits} commit(s) on local branches that no remote has{names}"));
+            }
+
+            if (info.LinkedWorktrees.Count > 0)
+            {
+                parts.Add(L.T(
+                    $"{info.LinkedWorktrees.Count} bağlı çalışma ağacı bozulur: {string.Join(", ", info.LinkedWorktrees.Take(3))}",
+                    $"{info.LinkedWorktrees.Count} linked worktree(s) break: {string.Join(", ", info.LinkedWorktrees.Take(3))}"));
+            }
 
             warnings.Add(new PlanWarning(WarningLevel.Danger, L.T(
                 $"Kaydedilmemiş iş kaybolacak: {string.Join(", ", parts)}.",

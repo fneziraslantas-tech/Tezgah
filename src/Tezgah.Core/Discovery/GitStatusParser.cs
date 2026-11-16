@@ -3,7 +3,13 @@ using System.Globalization;
 namespace Tezgah.Core.Discovery;
 
 /// <summary>Parsed output of <c>git status --porcelain=v2 --branch</c>.</summary>
-internal sealed record GitStatus(string? Branch, string? Upstream, int Ahead, int Behind, int Modified, int Untracked, int? Stashes, bool IsInitialCommit);
+internal sealed record GitStatus(string? Branch, string? Upstream, int Ahead, int Behind, int Modified, int Untracked, int? Stashes, bool IsInitialCommit)
+{
+    /// <summary>
+    /// git prints <c>branch.upstream</c> but no <c>branch.ab</c> line when the upstream ref no longer exists ("gone").
+    /// </summary>
+    public bool UpstreamGone { get; init; }
+}
 
 /// <summary>Robust parser for <c>git status --porcelain=v2 --branch [--show-stash]</c>.</summary>
 internal static class GitStatusParser
@@ -16,6 +22,7 @@ internal static class GitStatusParser
         int ahead = 0, behind = 0, modified = 0, untracked = 0;
         int? stashes = null;
         var initial = false;
+        var sawAheadBehind = false;
 
         foreach (var rawLine in output.Split('\n'))
         {
@@ -43,6 +50,7 @@ internal static class GitStatusParser
                 }
                 else if (header.StartsWith("branch.ab ", StringComparison.Ordinal))
                 {
+                    sawAheadBehind = true;
                     foreach (var part in header["branch.ab ".Length..].Split(' ', StringSplitOptions.RemoveEmptyEntries))
                     {
                         if (part.Length > 1 && int.TryParse(part.AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
@@ -82,6 +90,6 @@ internal static class GitStatusParser
             }
         }
 
-        return new GitStatus(branch, upstream, ahead, behind, modified, untracked, stashes, initial);
+        return new GitStatus(branch, upstream, ahead, behind, modified, untracked, stashes, initial) { UpstreamGone = upstream is not null && !sawAheadBehind };
     }
 }

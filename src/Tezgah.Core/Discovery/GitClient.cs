@@ -134,8 +134,19 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
 
         DateTimeOffset? lastCommitAt = null;
         string? subject = null;
+        int? unpushed = 0;
+        IReadOnlyList<string> unpushedBranches = [];
         if (!parsed.IsInitialCommit)
         {
+            // Work on ANY local branch that no remote-tracking ref has (other branches, no upstream, gone upstream).
+            var count = await RunGitAsync(LocalTimeout, ct, "rev-list", "--count", "--branches", "--not", "--remotes").ConfigureAwait(false);
+            unpushed = count.Success && int.TryParse(count.StdOut.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : null;
+            if (unpushed is not 0)
+            {
+                var refs = await RunGitAsync(LocalTimeout, ct, "for-each-ref", "--format=%(refname:short)%00%(upstream)%00%(upstream:track)", "refs/heads").ConfigureAwait(false);
+                unpushedBranches = refs.Success ? ParseUnpushedBranches(refs.StdOut) : [];
+            }
+
             var log = await RunGitAsync(LocalTimeout, ct, "log", "-1", "--format=%cI%x00%s").ConfigureAwait(false);
             if (log.Success)
             {
@@ -157,8 +168,19 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
             }
         }
 
+        IReadOnlyList<string> worktrees = [];
+        var wt = await RunGitAsync(LocalTimeout, ct, "worktree", "list", "--porcelain").ConfigureAwait(false);
+        if (wt.Success)
+        {
+            worktrees = ParseLinkedWorktrees(wt.StdOut, repoPath);
+        }
+
         return new GitInfo
         {
+            UnpushedCommits = unpushed,
+            UnpushedBranches = unpushedBranches,
+            UpstreamGone = parsed.UpstreamGone,
+            LinkedWorktrees = worktrees,
             RemoteUrl = remoteUrl,
             Branch = parsed.Branch,
             HasUpstream = parsed.Upstream is not null,
@@ -193,6 +215,51 @@ internal sealed class GitClient(ILogger<GitClient> logger) : IGitClient
         return DateTimeOffset.TryParse(datePart.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
             ? (at, subject)
             : (null, subject);
+    }
+
+    /// <summary>
+    /// Branches from <c>for-each-ref --format=%(refname:short)%00%(upstream)%00%(upstream:track)</c> that may hold work
+    /// no remote has: no upstream, "[ahead N]" or "[gone]". At most 10 names.
+    /// </summary>
+    internal static IReadOnlyList<string> ParseUnpushedBranches(string output)
+    {
+        var result = new List<string>();
+        foreach (var raw in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = raw.TrimEnd('\r').Split('\0');
+            if (parts.Length < 3 || parts[0].Length == 0)
+            {
+                continue;
+            }
+
+            if (parts[1].Length == 0 || parts[2].Contains("ahead", StringComparison.Ordinal) || parts[2].Contains("gone", StringComparison.Ordinal))
+            {
+                result.Add(parts[0]);
+                if (result.Count == 10)
+                {
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Paths of linked worktrees from <c>git worktree list --porcelain</c> when <paramref name="repoPath"/> is the main worktree.</summary>
+    internal static IReadOnlyList<string> ParseLinkedWorktrees(string output, string repoPath)
+    {
+        var paths = output.Split('\n')
+            .Select(l => l.TrimEnd('\r'))
+            .Where(l => l.StartsWith("worktree ", StringComparison.Ordinal))
+            .Select(l => l["worktree ".Length..].Replace('/', '\\'))
+            .ToList();
+        if (paths.Count < 2)
+        {
+            return [];
+        }
+
+        var self = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
+        return string.Equals(Path.TrimEndingDirectorySeparator(paths[0]), self, StringComparison.OrdinalIgnoreCase) ? paths.Skip(1).ToList() : [];
     }
 
     internal static bool IsDubiousOwnership(string stderr) =>
