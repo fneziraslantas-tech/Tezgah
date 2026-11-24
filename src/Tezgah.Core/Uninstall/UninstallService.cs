@@ -100,6 +100,9 @@ internal sealed partial class UninstallService(
             case ItemKind.PackageTool:
                 PlanPackageTool(item, recycle, steps, warnings);
                 break;
+            case ItemKind.AiMcp:
+                PlanAiMcp(item, recycle, steps, warnings);
+                break;
             default:
                 warnings.Add(new PlanWarning(WarningLevel.Blocker, L.T("Bu öğe türü kaldırılamaz.", "This kind of item cannot be uninstalled.")));
                 break;
@@ -980,6 +983,66 @@ internal sealed partial class UninstallService(
         }
 
         warnings.Add(new PlanWarning(WarningLevel.Blocker, L.T("Bu aracı kaldırmanın bir yolu bulunamadı.", "No way to remove this tool was found.")));
+    }
+
+    /// <summary>Plans an AI/MCP item removal: run its uninstall command if it has one, otherwise delete the single file/folder.</summary>
+    private void PlanAiMcp(CatalogItem item, bool recycle, List<UninstallStep> steps, List<PlanWarning> warnings)
+    {
+        if (item.UninstallCommand is not null)
+        {
+            steps.Add(new UninstallStep
+            {
+                Kind = UninstallStepKind.RunCommand,
+                Command = item.UninstallCommand,
+                Description = L.T($"Kaldırıcıyı çalıştır: {item.UninstallCommand.Display}", $"Run the remover: {item.UninstallCommand.Display}"),
+            });
+            return;
+        }
+
+        // Single-file binary (e.g. a go-installed MCP server or an Ollama model blob dir without manifest)
+        if (item.Path is not null && File.Exists(item.Path) && !Directory.Exists(item.Path))
+        {
+            var check = guard.Check(item.Path, PathOperation.Delete);
+            if (!check.Allowed)
+            {
+                warnings.Add(new PlanWarning(WarningLevel.Blocker, check.Reason ?? string.Empty));
+                return;
+            }
+
+            var file = Path.GetFullPath(item.Path);
+            steps.Add(new UninstallStep
+            {
+                Kind = UninstallStepKind.RemoveDirectory,
+                Path = file,
+                SizeBytes = new FileInfo(file).Length,
+                Description = L.T($"Programı sil: {file}", $"Delete the program: {file}") + " — " + DeleteDescription(file, recycle),
+            });
+            return;
+        }
+
+        // Folder (e.g. LM Studio model dir, VS Code extension dir)
+        if (item.Path is not null && Directory.Exists(item.Path))
+        {
+            var check = guard.Check(item.Path, PathOperation.Delete);
+            if (!check.Allowed)
+            {
+                warnings.Add(new PlanWarning(WarningLevel.Blocker, check.Reason ?? string.Empty));
+                return;
+            }
+
+            var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(item.Path));
+            var size = item.SizeBytes ?? DirectorySize.Measure(path, CancellationToken.None);
+            steps.Add(new UninstallStep
+            {
+                Kind = UninstallStepKind.RemoveDirectory,
+                Path = path,
+                SizeBytes = size,
+                Description = L.T($"Klasörü sil: {path}", $"Delete the folder: {path}") + " — " + DeleteDescription(path, recycle),
+            });
+            return;
+        }
+
+        warnings.Add(new PlanWarning(WarningLevel.Blocker, L.T("Bu AI/MCP öğesini kaldırmanın bir yolu bulunamadı.", "No way to remove this AI/MCP item was found.")));
     }
 
     private void AddStopProcessesStep(string itemId, string path, List<UninstallStep> steps, List<PlanWarning> warnings)

@@ -10,7 +10,7 @@ internal sealed class AiMcpProvider(ILogger<AiMcpProvider> logger) : IDiscoveryP
     public string Id => Sources.AiMcp;
 
     public Task<bool> IsAvailableAsync(CancellationToken ct) =>
-        Task.FromResult(OllamaIsAvailable() || LmStudioIsAvailable() || VsCodeAiExtensionsIsAvailable() || McpConfigsExist());
+        Task.FromResult(OllamaIsAvailable() || LmStudioIsAvailable() || AzureAiIsAvailable() || PythonAiIsAvailable() || VsCodeAiExtensionsIsAvailable() || McpConfigsExist());
 
     public async Task<IReadOnlyList<CatalogItem>> DiscoverAsync(TezgahSettings settings, IProgress<ScanProgress>? progress, CancellationToken ct)
     {
@@ -20,6 +20,8 @@ internal sealed class AiMcpProvider(ILogger<AiMcpProvider> logger) : IDiscoveryP
             progress?.Report(new ScanProgress(Id, null, 0));
             foreach (var item in DiscoverOllama(ct)) { ct.ThrowIfCancellationRequested(); items.Add(item); }
             foreach (var item in DiscoverLmStudio(ct)) { ct.ThrowIfCancellationRequested(); items.Add(item); }
+            foreach (var item in DiscoverAzureAi(ct)) { ct.ThrowIfCancellationRequested(); items.Add(item); }
+            foreach (var item in DiscoverPythonAi(ct)) { ct.ThrowIfCancellationRequested(); items.Add(item); }
             foreach (var item in DiscoverVsCodeAiExtensions(ct)) { ct.ThrowIfCancellationRequested(); items.Add(item); }
             foreach (var item in DiscoverMcpConfigs(ct)) { ct.ThrowIfCancellationRequested(); items.Add(item); }
             progress?.Report(new ScanProgress(Id, null, items.Count));
@@ -163,6 +165,125 @@ internal sealed class AiMcpProvider(ILogger<AiMcpProvider> logger) : IDiscoveryP
                     description: "LM Studio model", web: "https://lmstudio.ai/");
             }
         }
+    }
+
+    // ───────────────────────────── Azure AI / OpenAI local config ─────────────────────────────
+
+    private static readonly HashSet<string> AiPythonPackages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "openai", "anthropic", "langchain", "langchain-core", "google-generativeai",
+        "cohere", "replicate", "huggingface-hub", "ollama", "lmstudio",
+    };
+
+    private static bool AzureAiIsAvailable()
+    {
+        try
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Directory.Exists(Path.Combine(home, ".azure")) ||
+                   File.Exists(Path.Combine(home, ".azure", "config")) ||
+                   Directory.Exists(Path.Combine(home, "AppData", "Roaming", "Azure"));
+        }
+        catch { return false; }
+    }
+
+    private static IEnumerable<CatalogItem> DiscoverAzureAi(CancellationToken ct)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var candidates = new[]
+        {
+            Path.Combine(home, ".azure"),
+            Path.Combine(home, "AppData", "Roaming", "Azure"),
+        };
+
+        foreach (var root in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(root)) continue;
+
+            foreach (var dir in FsUtil.TopLevelDirectories(root))
+            {
+                ct.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(dir);
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                yield return CreateItem("azure:" + name, name, null, dir, null,
+                    description: "Azure AI resource", web: "https://azure.microsoft.com/products/ai-services");
+            }
+        }
+    }
+
+    // ───────────────────────────── Python AI packages (in user site-packages) ─────────────────────────────
+
+    private static bool PythonAiIsAvailable()
+    {
+        try
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Directory.Exists(Path.Combine(home, ".local", "lib")) ||
+                   Directory.Exists(Path.Combine(home, "AppData", "Roaming", "Python"));
+        }
+        catch { return false; }
+    }
+
+    private static IEnumerable<CatalogItem> DiscoverPythonAi(CancellationToken ct)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var candidates = new[]
+        {
+            Path.Combine(home, ".local", "lib"),
+            Path.Combine(home, "AppData", "Roaming", "Python"),
+        };
+
+        foreach (var root in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(root)) continue;
+
+            foreach (var pythonDir in FsUtil.TopLevelDirectories(root))
+            {
+                ct.ThrowIfCancellationRequested();
+                foreach (var sp in FsUtil.TopLevelDirectories(pythonDir))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var sitePackages = Path.Combine(sp, "site-packages");
+                    if (!Directory.Exists(sitePackages)) continue;
+
+                    foreach (var pkg in FsUtil.TopLevelDirectories(sitePackages))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var name = Path.GetFileName(pkg);
+                        if (!AiPythonPackages.Contains(name)) continue;
+
+                        var version = ReadDistInfoVersion(pkg);
+                        yield return CreateItem("python:" + name, name, version, pkg, null,
+                            description: $"Python AI package: {name}",
+                            web: $"https://pypi.org/project/{name}/");
+                    }
+                }
+            }
+        }
+    }
+
+    private static string? ReadDistInfoVersion(string pkgDir)
+    {
+        try
+        {
+            foreach (var di in Directory.GetDirectories(pkgDir, "*.dist-info"))
+            {
+                var metadata = Path.Combine(di, "METADATA");
+                if (File.Exists(metadata))
+                {
+                    foreach (var line in File.ReadLines(metadata))
+                    {
+                        if (line.StartsWith("Version: ", StringComparison.OrdinalIgnoreCase))
+                            return line["Version: ".Length..].Trim();
+                    }
+                }
+            }
+        }
+        catch { }
+        return null;
     }
 
     // ───────────────────────────── VS Code AI extensions ─────────────────────────────
