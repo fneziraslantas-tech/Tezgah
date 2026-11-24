@@ -154,6 +154,9 @@
                 <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Tools}">
                     <TextBlock><Run Text="{DynamicResource Filter_Tools}" /><Run Text="  " /><Run Text="{Binding CountTools, Mode=OneWay}" FontSize="11" /></TextBlock>
                 </RadioButton>
+                <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=AiMcp}">
+                    <TextBlock><Run Text="{DynamicResource Filter_AiMcp}" /><Run Text="  " /><Run Text="{Binding CountAiMcp, Mode=OneWay}" FontSize="11" /></TextBlock>
+                </RadioButton>
                 <RadioButton Style="{StaticResource Chip}" GroupName="filter" IsChecked="{Binding ActiveFilter, Converter={StaticResource EnumEq}, ConverterParameter=Running}">
                     <StackPanel Orientation="Horizontal">
                         <Ellipse Width="7" Height="7" Fill="{DynamicResource SystemFillColorSuccessBrush}" Margin="0,1,6,0" />
@@ -176,6 +179,7 @@
                     <ComboBoxItem Content="{DynamicResource Sort_Activity}" Tag="{x:Static vm:SortMode.Activity}" />
                     <ComboBoxItem Content="{DynamicResource Sort_Name}" Tag="{x:Static vm:SortMode.Name}" />
                     <ComboBoxItem Content="{DynamicResource Sort_Size}" Tag="{x:Static vm:SortMode.Size}" />
+                    <ComboBoxItem Content="{DynamicResource Sort_Source}" Tag="{x:Static vm:SortMode.Source}" />
                 </ComboBox>
             </StackPanel>
         </Grid>

@@ -14,6 +14,9 @@ public enum ItemKind
 
     /// <summary>A command-line tool installed through a package manager (pipx, npm -g, cargo, dotnet tool, scoop...).</summary>
     PackageTool,
+
+    /// <summary>An AI model (Ollama, LM Studio...) or an MCP server/plugin discovered on the machine.</summary>
+    AiMcp,
 }
 
 /// <summary>Well-known provider identifiers. Providers set <see cref="CatalogItem.Source"/> to one of these.</summary>
@@ -27,6 +30,9 @@ public static class Sources
     public const string DotnetTool = "dotnet-tool";
     public const string Scoop = "scoop";
     public const string GoBin = "go";
+
+    /// <summary>AI models and MCP servers discovered on the machine.</summary>
+    public const string AiMcp = "ai-mcp";
 }
 
 /// <summary>

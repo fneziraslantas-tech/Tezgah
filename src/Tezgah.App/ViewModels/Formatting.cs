@@ -9,6 +9,7 @@ public enum ItemFilter
     Repos,
     Apps,
     Tools,
+    AiMcp,
     Running,
     Forgotten,
     Favorites,
@@ -19,6 +20,7 @@ public enum SortMode
     Activity,
     Name,
     Size,
+    Source,
 }
 
 public static class Formatting

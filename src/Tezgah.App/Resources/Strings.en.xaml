@@ -43,6 +43,7 @@
     <sys:String x:Key="Filter_Repos">Repos</sys:String>
     <sys:String x:Key="Filter_Apps">Apps</sys:String>
     <sys:String x:Key="Filter_Tools">Tools</sys:String>
+    <sys:String x:Key="Filter_AiMcp">AI &amp; MCP</sys:String>
     <sys:String x:Key="Filter_Running">Running</sys:String>
     <sys:String x:Key="Filter_Forgotten">Forgotten</sys:String>
     <sys:String x:Key="Filter_Favorites">Favorites</sys:String>
@@ -50,6 +51,7 @@
     <sys:String x:Key="Sort_Activity">Last activity</sys:String>
     <sys:String x:Key="Sort_Name">Name</sys:String>
     <sys:String x:Key="Sort_Size">Size</sys:String>
+    <sys:String x:Key="Sort_Source">Source</sys:String>
 
     <!-- list -->
     <sys:String x:Key="List_Name">Found items</sys:String>
@@ -60,6 +62,7 @@
     <sys:String x:Key="Kind_ProjectFolder">Project folder</sys:String>
     <sys:String x:Key="Kind_InstalledApp">App</sys:String>
     <sys:String x:Key="Kind_PackageTool">Command-line tool</sys:String>
+    <sys:String x:Key="Kind_AiMcp">AI / MCP</sys:String>
 
     <!-- time -->
     <sys:String x:Key="Time_Unknown">unknown</sys:String>
@@ -248,7 +251,7 @@
     <sys:String x:Key="About_License">MIT license</sys:String>
     <sys:String x:Key="About_OpenLogs">Open log folder</sys:String>
     <!-- status bar -->
-    <sys:String x:Key="Status_Totals">{0} repos · {1} apps · {2} tools · {3} · {4} forgotten · {5} running</sys:String>
+    <sys:String x:Key="Status_Totals">{0} repos · {1} apps · {2} tools · {3} AI/MCP · {4} · {5} forgotten · {6} running</sys:String>
     <sys:String x:Key="Status_LastScan">Last scan: {0}</sys:String>
     <sys:String x:Key="Status_NeverScanned">Not scanned yet</sys:String>
 

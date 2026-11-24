@@ -54,6 +54,7 @@ public sealed partial class ItemViewModel : ObservableObject
     {
         ItemKind.InstalledApp => "app",
         ItemKind.PackageTool => "tool",
+        ItemKind.AiMcp => "ai",
         _ => Item.ProjectTypes.Count > 0 ? Item.ProjectTypes[0] : Item.Kind == ItemKind.GitRepository ? "git" : "folder",
     };
 
@@ -82,6 +83,7 @@ public sealed partial class ItemViewModel : ObservableObject
     {
         ItemKind.InstalledApp => string.Join(" · ", new[] { Item.Publisher, Item.Version }.Where(x => !string.IsNullOrEmpty(x))),
         ItemKind.PackageTool => string.Join(" · ", new[] { Item.Source, Item.Version }.Where(x => !string.IsNullOrEmpty(x))),
+        ItemKind.AiMcp => string.Join(" · ", new[] { Item.Source, Item.Version }.Where(x => !string.IsNullOrEmpty(x))),
         _ => Item.Path ?? string.Empty,
     };
 

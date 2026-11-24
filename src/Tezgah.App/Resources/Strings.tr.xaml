@@ -43,6 +43,7 @@
     <sys:String x:Key="Filter_Repos">Repolar</sys:String>
     <sys:String x:Key="Filter_Apps">Uygulamalar</sys:String>
     <sys:String x:Key="Filter_Tools">Araçlar</sys:String>
+    <sys:String x:Key="Filter_AiMcp">AI ve MCP</sys:String>
     <sys:String x:Key="Filter_Running">Çalışanlar</sys:String>
     <sys:String x:Key="Filter_Forgotten">Unutulanlar</sys:String>
     <sys:String x:Key="Filter_Favorites">Favoriler</sys:String>
@@ -50,6 +51,7 @@
     <sys:String x:Key="Sort_Activity">Son etkinlik</sys:String>
     <sys:String x:Key="Sort_Name">Ad</sys:String>
     <sys:String x:Key="Sort_Size">Boyut</sys:String>
+    <sys:String x:Key="Sort_Source">Kaynak</sys:String>
 
     <!-- liste -->
     <sys:String x:Key="List_Name">Bulunanlar</sys:String>
@@ -60,6 +62,7 @@
     <sys:String x:Key="Kind_ProjectFolder">Proje klasörü</sys:String>
     <sys:String x:Key="Kind_InstalledApp">Uygulama</sys:String>
     <sys:String x:Key="Kind_PackageTool">Komut satırı aracı</sys:String>
+    <sys:String x:Key="Kind_AiMcp">AI / MCP</sys:String>
 
     <!-- zaman -->
     <sys:String x:Key="Time_Unknown">bilinmiyor</sys:String>
@@ -248,7 +251,7 @@
     <sys:String x:Key="About_License">MIT lisansı</sys:String>
     <sys:String x:Key="About_OpenLogs">Günlük klasörünü aç</sys:String>
     <!-- durum çubuğu -->
-    <sys:String x:Key="Status_Totals">{0} repo · {1} uygulama · {2} araç · {3} · {4} unutulmuş · {5} çalışıyor</sys:String>
+    <sys:String x:Key="Status_Totals">{0} repo · {1} uygulama · {2} araç · {3} AI/MCP · {4} · {5} unutulmuş · {6} çalışıyor</sys:String>
     <sys:String x:Key="Status_LastScan">Son tarama: {0}</sys:String>
     <sys:String x:Key="Status_NeverScanned">Henüz taranmadı</sys:String>
 

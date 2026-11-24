@@ -137,6 +137,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public int CountTools => _items.Values.Count(i => !i.Meta.Hidden && i.Kind == ItemKind.PackageTool);
 
+    public int CountAiMcp => _items.Values.Count(i => !i.Meta.Hidden && i.Kind == ItemKind.AiMcp);
+
     public int CountForgotten => _items.Values.Count(i => !i.Meta.Hidden && i.IsForgotten);
 
     public int CountFavorites => _items.Values.Count(i => !i.Meta.Hidden && i.IsFavorite);
@@ -424,6 +426,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             SortMode.Name => q.OrderBy(i => i.Name, StringComparer.Create(Formatting.Culture, ignoreCase: true)),
             SortMode.Size => q.OrderByDescending(i => i.Item.SizeBytes ?? -1).ThenBy(i => i.Name, StringComparer.Create(Formatting.Culture, ignoreCase: true)),
+            SortMode.Source => q.OrderBy(i => i.Item.Source, StringComparer.Create(Formatting.Culture, ignoreCase: true)).ThenBy(i => i.Name, StringComparer.Create(Formatting.Culture, ignoreCase: true)),
             _ => q.OrderByDescending(i => i.IsRunning).ThenByDescending(i => i.EffectiveActivity ?? DateTimeOffset.MinValue),
         };
         _applyingFilter = true;
@@ -444,6 +447,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ItemFilter.Repos => i.IsProject,
         ItemFilter.Apps => i.Kind == ItemKind.InstalledApp,
         ItemFilter.Tools => i.Kind == ItemKind.PackageTool,
+        ItemFilter.AiMcp => i.Kind == ItemKind.AiMcp,
         ItemFilter.Running => i.IsRunning,
         ItemFilter.Forgotten => i.IsForgotten,
         ItemFilter.Favorites => i.IsFavorite,
@@ -497,7 +501,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var visible = _items.Values.Where(i => !i.Meta.Hidden).ToList();
         var bytes = visible.Sum(i => i.Item.SizeBytes ?? 0);
-        StatusText = _s.Format("Status_Totals", CountRepos, CountApps, CountTools, Formatting.Bytes(bytes), CountForgotten, RunningCount);
+        StatusText = _s.Format("Status_Totals", CountRepos, CountApps, CountTools, CountAiMcp, Formatting.Bytes(bytes), CountForgotten, RunningCount);
         var last = _catalog.State.LastScanAt;
         LastScanText = last is null ? _s.Text("Status_NeverScanned") : _s.Format("Status_LastScan", Formatting.Relative(last, _time.GetLocalNow(), _s));
         OnPropertyChanged(nameof(CountAll));

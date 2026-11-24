@@ -36,6 +36,7 @@ public static partial class TezgahCoreServices
         services.AddSingleton<IDiscoveryProvider, DotnetToolProvider>();
         services.AddSingleton<IDiscoveryProvider, ScoopProvider>();
         services.AddSingleton<IDiscoveryProvider, GoBinProvider>();
+        services.AddSingleton<IDiscoveryProvider, AiMcpProvider>();
 
         services.AddSingleton<ICatalogStore>(sp => new CatalogStore(sp.GetRequiredService<ILogger<CatalogStore>>()));
         services.AddSingleton<ICatalogService, CatalogService>();
